@@ -127,9 +127,20 @@ def load_user(user_id):
 
 
 # ---------------------------------------------------------------------------
-# Weather helper (Open-Meteo — completely free, no signup, no API key ever needed)
+# Weather helper
+# Primary: OpenWeatherMap (if OPENWEATHER_API_KEY is set) — key-based quota,
+#          not shared with other apps on the same hosting IP.
+# Fallback: Open-Meteo — free, no key needed, but rate-limited per IP address,
+#          which can get exhausted on shared hosts like Render's free tier
+#          when OTHER unrelated apps on the same IP use it heavily.
+# Both results are cached in memory for a few minutes to cut down on calls.
 # ---------------------------------------------------------------------------
+import time
+
+OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY", "")
 _geocode_cache = {}  # simple in-memory cache so we don't look up the same city every request
+_weather_cache = {"data": None, "fetched_at": 0}
+WEATHER_CACHE_SECONDS = 600  # 10 minutes
 
 WMO_CODES = {
     0: "clear sky", 1: "mainly clear", 2: "partly cloudy", 3: "overcast",
@@ -163,57 +174,144 @@ def geocode_city(city_name):
     return coords
 
 
-def get_weather():
+def _get_weather_openweathermap():
+    """Fetch current weather + rain chance from OpenWeatherMap (needs OPENWEATHER_API_KEY)."""
+    resp = requests.get(
+        "https://api.openweathermap.org/data/2.5/weather",
+        params={"q": WEATHER_CITY, "appid": OPENWEATHER_API_KEY, "units": "metric"},
+        timeout=6,
+    )
+    data = resp.json()
+
+    if str(data.get("cod")) != "200":
+        return {"available": False, "reason": data.get("message", "weather lookup failed")}
+
+    description = (data.get("weather") or [{}])[0].get("description", "unknown")
+    main = data.get("main", {})
+    clouds = data.get("clouds", {}).get("all", 0)
+    # OpenWeatherMap's free current-weather endpoint doesn't give a rain probability
+    # directly, so we approximate it from cloud cover / rain presence.
+    rain_probability = 80 if "rain" in data else min(clouds, 60)
+
+    return {
+        "available": True,
+        "condition": description,
+        "description": description,
+        "temp": main.get("temp"),
+        "humidity": main.get("humidity"),
+        "rain_probability": rain_probability,
+    }
+
+
+def _get_weather_openmeteo():
     """Fetch current weather + rain chance from Open-Meteo (free forever, no key needed)."""
+    coords = geocode_city(WEATHER_CITY)
+    if not coords:
+        return {"available": False, "reason": f"Could not find city '{WEATHER_CITY}'"}
+    lat, lon = coords
+
+    resp = requests.get(
+        "https://api.open-meteo.com/v1/forecast",
+        params={
+            "latitude": lat,
+            "longitude": lon,
+            "current": "temperature_2m,relative_humidity_2m,weather_code",
+            "hourly": "precipitation_probability",
+            "timezone": "auto",
+            "forecast_days": 1,
+        },
+        timeout=6,
+    )
+    data = resp.json()
+
+    if "current" not in data:
+        return {"available": False, "reason": data.get("reason", "weather lookup failed")}
+
+    current = data["current"]
+    code = current.get("weather_code", 0)
+    description = WMO_CODES.get(code, "unknown")
+
+    # Find the precipitation probability for the current hour
+    rain_probability = 10
     try:
-        coords = geocode_city(WEATHER_CITY)
-        if not coords:
-            return {"available": False, "reason": f"Could not find city '{WEATHER_CITY}'"}
-        lat, lon = coords
+        current_time = current["time"]
+        hourly_times = data["hourly"]["time"]
+        hourly_probs = data["hourly"]["precipitation_probability"]
+        if current_time in hourly_times:
+            idx = hourly_times.index(current_time)
+            rain_probability = hourly_probs[idx]
+    except (KeyError, ValueError, IndexError):
+        rain_probability = 60 if code in RAIN_CODES else 10
 
-        resp = requests.get(
-            "https://api.open-meteo.com/v1/forecast",
-            params={
-                "latitude": lat,
-                "longitude": lon,
-                "current": "temperature_2m,relative_humidity_2m,weather_code",
-                "hourly": "precipitation_probability",
-                "timezone": "auto",
-                "forecast_days": 1,
-            },
-            timeout=6,
-        )
-        data = resp.json()
+    return {
+        "available": True,
+        "condition": description,
+        "description": description,
+        "temp": current.get("temperature_2m"),
+        "humidity": current.get("relative_humidity_2m"),
+        "rain_probability": rain_probability,
+    }
 
-        if "current" not in data:
-            return {"available": False, "reason": data.get("reason", "weather lookup failed")}
 
-        current = data["current"]
-        code = current.get("weather_code", 0)
-        description = WMO_CODES.get(code, "unknown")
+def _get_weather_wttr():
+    """Fallback: wttr.in — completely free, no signup, no API key, ever."""
+    resp = requests.get(
+        f"https://wttr.in/{WEATHER_CITY}",
+        params={"format": "j1"},
+        timeout=6,
+        headers={"User-Agent": "curl"},  # wttr.in expects a curl-like UA
+    )
+    data = resp.json()
 
-        # Find the precipitation probability for the current hour
-        rain_probability = 10
+    current = data["current_condition"][0]
+    description = current["weatherDesc"][0]["value"].lower()
+    rain_probability = 10
+    try:
+        today = data["weather"][0]["hourly"]
+        # pick the hourly slot closest to now-ish; just average them as a simple estimate
+        probs = [int(h.get("chanceofrain", 0)) for h in today]
+        rain_probability = max(probs) if probs else 10
+    except (KeyError, IndexError, ValueError):
+        pass
+
+    return {
+        "available": True,
+        "condition": description,
+        "description": description,
+        "temp": float(current.get("temp_C", 0)),
+        "humidity": float(current.get("humidity", 0)),
+        "rain_probability": rain_probability,
+    }
+
+
+def get_weather():
+    """Return cached weather if fresh, else try OpenWeatherMap (if key set), then
+    Open-Meteo, then wttr.in as a last-resort no-key fallback."""
+    now = time.time()
+    if _weather_cache["data"] and (now - _weather_cache["fetched_at"] < WEATHER_CACHE_SECONDS):
+        return _weather_cache["data"]
+
+    result = {"available": False, "reason": "no provider succeeded"}
+
+    providers = []
+    if OPENWEATHER_API_KEY:
+        providers.append(_get_weather_openweathermap)
+    providers.append(_get_weather_openmeteo)
+    providers.append(_get_weather_wttr)
+
+    for provider in providers:
         try:
-            current_time = current["time"]
-            hourly_times = data["hourly"]["time"]
-            hourly_probs = data["hourly"]["precipitation_probability"]
-            if current_time in hourly_times:
-                idx = hourly_times.index(current_time)
-                rain_probability = hourly_probs[idx]
-        except (KeyError, ValueError, IndexError):
-            rain_probability = 60 if code in RAIN_CODES else 10
+            result = provider()
+            if result.get("available"):
+                break
+        except Exception as exc:
+            result = {"available": False, "reason": str(exc)}
 
-        return {
-            "available": True,
-            "condition": description,
-            "description": description,
-            "temp": current.get("temperature_2m"),
-            "humidity": current.get("relative_humidity_2m"),
-            "rain_probability": rain_probability,
-        }
-    except Exception as exc:
-        return {"available": False, "reason": str(exc)}
+    # Only cache successful results, so a failure doesn't stick around for 10 minutes.
+    if result.get("available"):
+        _weather_cache["data"] = result
+        _weather_cache["fetched_at"] = now
+    return result
 
 
 
