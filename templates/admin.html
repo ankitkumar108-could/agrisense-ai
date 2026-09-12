@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Admin — Smart Soil{% endblock %}
+{% block content %}
+<h1>🔑 Admin Panel</h1>
+<p>Sirf tumhe (admin) hi ye page dikh raha hai.</p>
+
+<h2>Users ({{ users|length }})</h2>
+<table class="admin-table">
+  <tr><th>ID</th><th>Email</th><th>Registered on</th></tr>
+  {% for u in users %}
+  <tr>
+    <td>{{ u.id }}</td>
+    <td>{{ u.email }}</td>
+    <td>{{ u.created_at.strftime('%Y-%m-%d %H:%M') if u.created_at else '-' }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="3">Koi user register nahi hua abhi tak.</td></tr>
+  {% endfor %}
+</table>
+
+<h2>Farm Profiles</h2>
+<table class="admin-table">
+  <tr><th>User ID</th><th>Area</th><th>Crop</th></tr>
+  {% for p in profiles %}
+  <tr>
+    <td>{{ p.user_id }}</td>
+    <td>{{ p.area_value }} {{ p.area_unit }}</td>
+    <td>{{ p.crop_name or '-' }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="3">Koi profile nahi mila.</td></tr>
+  {% endfor %}
+</table>
+
+<h2>Pump Control</h2>
+<p>Mode: <strong>{{ control.mode }}</strong> | Manual state: <strong>{{ control.manual_state }}</strong></p>
+
+<h2>Recent Sensor Readings (last 50)</h2>
+<table class="admin-table">
+  <tr>
+    <th>Time</th><th>Moisture</th><th>Soil Temp</th><th>pH</th><th>EC</th>
+    <th>Air Temp</th><th>Humidity</th><th>Rain</th><th>Pump</th>
+  </tr>
+  {% for r in readings %}
+  <tr>
+    <td>{{ r.timestamp.strftime('%Y-%m-%d %H:%M') if r.timestamp else '-' }}</td>
+    <td>{{ r.moisture }}</td>
+    <td>{{ r.soil_temp }}</td>
+    <td>{{ r.ph }}</td>
+    <td>{{ r.ec }}</td>
+    <td>{{ r.air_temp }}</td>
+    <td>{{ r.humidity }}</td>
+    <td>{{ 'Yes' if r.rain_detected else 'No' }}</td>
+    <td>{{ r.pump_decision or '-' }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="9">Abhi tak koi sensor data nahi aaya.</td></tr>
+  {% endfor %}
+</table>
+
+<h2>Recent AI Chat Messages (last 50)</h2>
+<table class="admin-table">
+  <tr><th>Time</th><th>User ID</th><th>Role</th><th>Message</th></tr>
+  {% for m in messages %}
+  <tr>
+    <td>{{ m.timestamp.strftime('%Y-%m-%d %H:%M') if m.timestamp else '-' }}</td>
+    <td>{{ m.user_id }}</td>
+    <td>{{ m.role }}</td>
+    <td>{{ m.content }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="4">Koi chat message nahi mila.</td></tr>
+  {% endfor %}
+</table>
+
+<style>
+.admin-table { width: 100%; border-collapse: collapse; margin-bottom: 2rem; font-size: 0.9rem; }
+.admin-table th, .admin-table td { border: 1px solid #ccc; padding: 6px 10px; text-align: left; }
+.admin-table th { background: #f0f0f0; }
+</style>
+{% endblock %}

@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Admin Lock — Smart Soil{% endblock %}
+{% block content %}
+<h1>🔒 Admin Access</h1>
+<p>Ye page sirf admin passcode se khulta hai.</p>
+
+<form method="POST" style="max-width:320px;">
+  <input type="password" name="passcode" placeholder="Enter admin passcode" required
+         style="width:100%; padding:10px; margin-bottom:10px;">
+  <button type="submit" style="padding:10px 20px;">Unlock</button>
+</form>
+{% endblock %}
