@@ -428,7 +428,7 @@ def ask_ai(question, context_summary):
     try:
         url = (
             "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+            f"gemini-flash-latest:generateContent?key={GEMINI_API_KEY}"
         )
         prompt = (
             "You are an agricultural assistant helping an Indian farmer using an IoT soil "
