@@ -18,7 +18,15 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-secret-change-me")
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///smart_soil.db"
+
+# Use a real Postgres database when DATABASE_URL is set (e.g. on Render),
+# otherwise fall back to a local SQLite file for local development.
+# Render's Postgres URL starts with "postgres://" but SQLAlchemy 2.x needs
+# "postgresql://" - this rewrites it automatically.
+_db_url = os.getenv("DATABASE_URL", "sqlite:///smart_soil.db")
+if _db_url.startswith("postgres://"):
+    _db_url = _db_url.replace("postgres://", "postgresql://", 1)
+app.config["SQLALCHEMY_DATABASE_URI"] = _db_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 WEATHER_CITY = os.getenv("WEATHER_CITY", "Lucknow")
@@ -565,7 +573,11 @@ def api_latest():
 
 
 # ---------------------------------------------------------------------------
+# Create tables at import time too, so this works whether the app is started
+# with `python app.py` OR with a WSGI server like `gunicorn app:app`
+# (Replit deployments typically use the latter, which never hits __main__).
+with app.app_context():
+    db.create_all()
+
 if __name__ == "__main__":
-    with app.app_context():
-        db.create_all()
     app.run(debug=True, host="0.0.0.0", port=5000)
