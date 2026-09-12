@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Register — Smart Soil{% endblock %}
+{% block content %}
+<div class="auth-card">
+  <h1>Create account</h1>
+  <form method="POST">
+    <label>Email</label>
+    <input type="email" name="email" required autofocus>
+    <label>Password</label>
+    <input type="password" name="password" required minlength="6">
+    <button type="submit">Register</button>
+  </form>
+  <p class="auth-switch">Already have an account? <a href="{{ url_for('login') }}">Log in</a></p>
+</div>
+{% endblock %}
