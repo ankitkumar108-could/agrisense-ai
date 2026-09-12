@@ -49,9 +49,7 @@ def add_no_cache_headers(response):
 DEVICE_API_KEY = os.getenv("DEVICE_API_KEY", "change_this_to_your_own_device_secret")
 MOISTURE_THRESHOLD = int(os.getenv("MOISTURE_THRESHOLD", "2500"))
 RAIN_SKIP_PROBABILITY = int(os.getenv("RAIN_SKIP_PROBABILITY", "50"))
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")  # free key(s) from https://ai.google.dev — comma-separate multiple keys to auto-rotate when one hits its limit
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")  # free key from https://console.groq.com/keys — used if all Gemini keys are exhausted/overloaded
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")  # free key from https://openrouter.ai/keys — last-resort fallback
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")  # free key from https://ai.google.dev
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "").strip().lower()  # only this email can view /admin
 ADMIN_PASSCODE = os.getenv("ADMIN_PASSCODE", "")  # extra secret passcode required to view /admin
 
@@ -433,126 +431,56 @@ def build_context_summary(latest, weather, profile):
     )
 
 
-def _call_llm_api(url, headers, body, extract_fn, retries=3):
-    """
-    POST to an LLM API with automatic silent retries on temporary failures
-    (429 rate-limit, 500/503 overload, or network errors) so a single busy
-    moment doesn't surface as an error to the farmer. Real errors (e.g. a bad
-    key, 401/403/404) are not retried — no point trying the same broken thing
-    3 times.
-    Returns (answer_text_or_None, error_message_or_None).
-    """
-    last_error = "unknown error"
-    for attempt in range(retries):
-        try:
-            resp = requests.post(url, headers=headers, json=body, timeout=20)
-            data = resp.json()
-
-            if resp.status_code == 200:
-                return extract_fn(data), None
-
-            last_error = data.get("error", {}).get("message", f"HTTP {resp.status_code}")
-
-            if resp.status_code in (429, 500, 502, 503, 504):
-                time.sleep(1.2 * (attempt + 1))  # brief, increasing wait — stays invisible to the user
-                continue
-            return None, last_error  # a real error — retrying won't help
-        except Exception as exc:
-            last_error = str(exc)
-            time.sleep(1.2 * (attempt + 1))
-    return None, last_error
-
-
-def _ask_gemini(prompt):
-    """Try every comma-separated Gemini key, silently retrying each up to 3 times on overload."""
-    keys = [k.strip() for k in GEMINI_API_KEY.split(",") if k.strip()]
-    if not keys:
-        return None, "no Gemini key set"
-
-    body = {"contents": [{"parts": [{"text": prompt}]}]}
-    extract = lambda data: data["candidates"][0]["content"]["parts"][0]["text"]
-    last_error = "unknown error"
-
-    for key in keys:
-        url = (
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"gemini-2.5-flash-lite:generateContent?key={key}"
-        )
-        answer, error = _call_llm_api(url, {}, body, extract, retries=3)
-        if answer:
-            return answer, None
-        last_error = error
-    return None, last_error
-
-
-def _ask_groq(prompt):
-    """Free fallback #2: Groq (needs a free key from https://console.groq.com/keys)."""
-    if not GROQ_API_KEY:
-        return None, "no Groq key set"
-    body = {
-        "model": "llama-3.3-70b-versatile",
-        "messages": [{"role": "user", "content": prompt}],
-    }
-    extract = lambda data: data["choices"][0]["message"]["content"]
-    return _call_llm_api(
-        "https://api.groq.com/openai/v1/chat/completions",
-        {"Authorization": f"Bearer {GROQ_API_KEY}"},
-        body, extract, retries=3,
-    )
-
-
-def _ask_openrouter(prompt):
-    """Free fallback #3: OpenRouter free models (needs a free key from https://openrouter.ai/keys)."""
-    if not OPENROUTER_API_KEY:
-        return None, "no OpenRouter key set"
-    body = {
-        "model": "meta-llama/llama-3.3-70b-instruct:free",
-        "messages": [{"role": "user", "content": prompt}],
-    }
-    extract = lambda data: data["choices"][0]["message"]["content"]
-    return _call_llm_api(
-        "https://openrouter.ai/api/v1/chat/completions",
-        {"Authorization": f"Bearer {OPENROUTER_API_KEY}"},
-        body, extract, retries=3,
-    )
-
-
 def ask_ai(question, context_summary):
     """
-    Tries multiple FREE AI providers in order, so if one is out of quota or
-    overloaded, the next one is used automatically:
-      1. Google Gemini — every comma-separated GEMINI_API_KEY, each retried a couple
-         of times on temporary overload (429/500/503)
-      2. Groq                (GROQ_API_KEY)
-      3. OpenRouter free tier (OPENROUTER_API_KEY)
-    Any provider whose key isn't set is simply skipped.
-    Falls back to a short rule-based note if NO provider is configured at all.
+    Calls Google Gemini's free-tier API if a key is configured.
+    Falls back to a short rule-based note if no key is set (so the feature still works for free).
+    Retries a couple of times if Google's servers are temporarily overloaded (503).
     """
-    if not (GEMINI_API_KEY or GROQ_API_KEY or OPENROUTER_API_KEY):
+    if not GEMINI_API_KEY:
         return (
-            "AI chat abhi off hai kyunki koi bhi AI key set nahi hai (.env mein GEMINI_API_KEY, "
-            "GROQ_API_KEY, ya OPENROUTER_API_KEY daal do — sab free hain). Tab tak, upar diya gaya "
-            "'Get Recommendation' button rule-based fertilizer aur crop suggestion deta rahega."
+            "AI chat abhi off hai kyunki GEMINI_API_KEY set nahi hai (.env mein free key daal do — "
+            "ai.google.dev se milti hai). Tab tak, upar diya gaya 'Get Recommendation' button "
+            "rule-based fertilizer aur crop suggestion deta rahega."
         )
 
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"gemini-flash-latest:generateContent?key={GEMINI_API_KEY}"
+    )
     prompt = (
         "You are an agricultural assistant helping an Indian farmer using an IoT soil "
         "monitoring system. Answer briefly and practically, in simple Hindi/Hinglish where natural.\n\n"
         f"Current farm context:\n{context_summary}\n\n"
         f"Farmer's question: {question}"
     )
+    body = {"contents": [{"parts": [{"text": prompt}]}]}
 
     last_error = "unknown error"
-    for provider in (_ask_gemini, _ask_groq, _ask_openrouter):
-        result, error = provider(prompt)
-        if result:
-            return result
-        if error:
-            last_error = error
+    for attempt in range(3):  # try up to 3 times total
+        try:
+            resp = requests.post(url, json=body, timeout=20)
+            data = resp.json()
+
+            if resp.status_code == 200:
+                return data["candidates"][0]["content"]["parts"][0]["text"]
+
+            last_error = data.get("error", {}).get("message", f"HTTP {resp.status_code}")
+
+            # Only retry on "overloaded / temporary" style errors; fail fast on real errors
+            # (e.g. bad API key) so the farmer isn't left waiting for nothing.
+            if resp.status_code in (429, 500, 503):
+                time.sleep(1.5 * (attempt + 1))  # wait a bit longer each retry
+                continue
+            else:
+                break
+        except Exception as exc:
+            last_error = str(exc)
+            time.sleep(1.5 * (attempt + 1))
 
     return (
-        "AI abhi thoda busy hai, thodi der (1-2 minute) baad dobara 'Ask' dabao. "
-        "Tab tak upar diya gaya 'Get Recommendation' button turant fertilizer/crop salah de sakta hai."
+        f"AI abhi thoda busy hai ({last_error}). Google ka free server kabhi kabhi high demand "
+        "mein overload ho jaata hai — 30 second baad dobara 'Ask' dabao, usually kaam kar jaata hai."
     )
 
 
