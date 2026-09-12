@@ -6,7 +6,7 @@
 
 <section class="weather-box">
   {% if weather.available %}
-    <strong>Weather in {{ weather.get('city', '') }}:</strong>
+    <strong>Weather in {{ weather.get('Jaipur', '') }}:</strong>
     {{ weather.description }}, {{ weather.temp }}°C, humidity {{ weather.humidity }}%
     — rain chance ~{{ weather.rain_probability }}%
   {% else %}
