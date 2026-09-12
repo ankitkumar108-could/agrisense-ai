@@ -18,6 +18,9 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-secret-change-me")
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = True  # only send cookie over HTTPS (Render is HTTPS)
 
 # Use a real Postgres database when DATABASE_URL is set (e.g. on Render),
 # otherwise fall back to a local SQLite file for local development.
@@ -30,10 +33,25 @@ app.config["SQLALCHEMY_DATABASE_URI"] = _db_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 WEATHER_CITY = os.getenv("WEATHER_CITY", "Lucknow")
+
+
+# ---------------------------------------------------------------------------
+# Security: never let any page be cached (by the browser or by a network/
+# carrier proxy). Without this, some mobile "data saver" proxies have been
+# known to serve one user's logged-in page to a different user.
+# ---------------------------------------------------------------------------
+@app.after_request
+def add_no_cache_headers(response):
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 DEVICE_API_KEY = os.getenv("DEVICE_API_KEY", "change_this_to_your_own_device_secret")
 MOISTURE_THRESHOLD = int(os.getenv("MOISTURE_THRESHOLD", "2500"))
 RAIN_SKIP_PROBABILITY = int(os.getenv("RAIN_SKIP_PROBABILITY", "50"))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")  # free key from https://ai.google.dev
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "").strip().lower()  # only this email can view /admin
+ADMIN_PASSCODE = os.getenv("ADMIN_PASSCODE", "")  # extra secret passcode required to view /admin
 
 db = SQLAlchemy(app)
 
@@ -417,6 +435,7 @@ def ask_ai(question, context_summary):
     """
     Calls Google Gemini's free-tier API if a key is configured.
     Falls back to a short rule-based note if no key is set (so the feature still works for free).
+    Retries a couple of times if Google's servers are temporarily overloaded (503).
     """
     if not GEMINI_API_KEY:
         return (
@@ -425,27 +444,44 @@ def ask_ai(question, context_summary):
             "rule-based fertilizer aur crop suggestion deta rahega."
         )
 
-    try:
-        url = (
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"gemini-flash-latest:generateContent?key={GEMINI_API_KEY}"
-        )
-        prompt = (
-            "You are an agricultural assistant helping an Indian farmer using an IoT soil "
-            "monitoring system. Answer briefly and practically, in simple Hindi/Hinglish where natural.\n\n"
-            f"Current farm context:\n{context_summary}\n\n"
-            f"Farmer's question: {question}"
-        )
-        body = {"contents": [{"parts": [{"text": prompt}]}]}
-        resp = requests.post(url, json=body, timeout=15)
-        data = resp.json()
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"gemini-flash-latest:generateContent?key={GEMINI_API_KEY}"
+    )
+    prompt = (
+        "You are an agricultural assistant helping an Indian farmer using an IoT soil "
+        "monitoring system. Answer briefly and practically, in simple Hindi/Hinglish where natural.\n\n"
+        f"Current farm context:\n{context_summary}\n\n"
+        f"Farmer's question: {question}"
+    )
+    body = {"contents": [{"parts": [{"text": prompt}]}]}
 
-        if resp.status_code != 200:
-            return f"AI se response nahi mila ({data.get('error', {}).get('message', 'unknown error')})."
+    last_error = "unknown error"
+    for attempt in range(3):  # try up to 3 times total
+        try:
+            resp = requests.post(url, json=body, timeout=20)
+            data = resp.json()
 
-        return data["candidates"][0]["content"]["parts"][0]["text"]
-    except Exception as exc:
-        return f"AI call fail hui: {exc}"
+            if resp.status_code == 200:
+                return data["candidates"][0]["content"]["parts"][0]["text"]
+
+            last_error = data.get("error", {}).get("message", f"HTTP {resp.status_code}")
+
+            # Only retry on "overloaded / temporary" style errors; fail fast on real errors
+            # (e.g. bad API key) so the farmer isn't left waiting for nothing.
+            if resp.status_code in (429, 500, 503):
+                time.sleep(1.5 * (attempt + 1))  # wait a bit longer each retry
+                continue
+            else:
+                break
+        except Exception as exc:
+            last_error = str(exc)
+            time.sleep(1.5 * (attempt + 1))
+
+    return (
+        f"AI abhi thoda busy hai ({last_error}). Google ka free server kabhi kabhi high demand "
+        "mein overload ho jaata hai — 30 second baad dobara 'Ask' dabao, usually kaam kar jaata hai."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -668,6 +704,36 @@ def api_latest():
         "pump_decision": control.manual_state if control.mode == "MANUAL" else latest.pump_decision,
         "pump_reason": "Manual override from dashboard" if control.mode == "MANUAL" else latest.pump_reason,
     })
+
+
+# ---------------------------------------------------------------------------
+# Admin (read-only view of the database).
+# Two locks: (1) must be logged in as ADMIN_EMAIL, (2) must enter ADMIN_PASSCODE.
+# ---------------------------------------------------------------------------
+@app.route("/admin", methods=["GET", "POST"])
+@login_required
+def admin():
+    if not ADMIN_EMAIL or current_user.email.strip().lower() != ADMIN_EMAIL:
+        return "Access denied — this page is admin-only.", 403
+
+    if not ADMIN_PASSCODE:
+        return "Admin panel is locked: set ADMIN_PASSCODE in environment variables first.", 403
+
+    unlocked = request.form.get("passcode") == ADMIN_PASSCODE
+    if not unlocked:
+        return render_template("admin_lock.html")
+
+    users = User.query.order_by(User.created_at.desc()).all()
+    readings = SensorReading.query.order_by(SensorReading.timestamp.desc()).limit(50).all()
+    messages = ChatMessage.query.order_by(ChatMessage.timestamp.desc()).limit(50).all()
+    profiles = FarmProfile.query.all()
+    control = get_control()
+
+    return render_template(
+        "admin.html",
+        users=users, readings=readings, messages=messages,
+        profiles=profiles, control=control,
+    )
 
 
 # ---------------------------------------------------------------------------
