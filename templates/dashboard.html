@@ -1,167 +1,190 @@
-{% extends "base.html" %}
-{% block title %}Dashboard — agrisense_Ai{% endblock %}
-{% block content %}
+{% extends "base.html" %} 
+{% block title %}Dashboard — agrisense_Ai{% endblock %} 
+{% block content %} 
 
-<h1>Seven Sensors. One Living Soil Profile.</h1>
+<h1>Seven Sensors. One Living Soil Profile.</h1> 
 
-<section class="weather-box">
-  {% if weather.available %}
-    <strong>Weather in {{ weather.get('Jaipur', '') }}:</strong>
-    {{ weather.description }}, {{ weather.temp }}°C, humidity {{ weather.humidity }}%
-    — rain chance ~{{ weather.rain_probability }}%
-  {% else %}
-    <strong>Weather:</strong> unavailable ({{ weather.reason }})
-  {% endif %}
-</section>
+<section class="weather-box"> 
+  {% if weather.available %} 
+    <strong>Weather in {{ weather.get('Jaipur', '') }}:</strong> 
+    {{ weather.description }}, {{ weather.temp }}°C, humidity {{ weather.humidity }}% 
+    — rain chance ~{{ weather.rain_probability }}% 
+  {% else %} 
+    <strong>Weather:</strong> unavailable ({{ weather.reason }}) 
+  {% endif %} 
+</section> 
 
-<section class="pump-banner {{ 'on' if latest and latest.pump_decision == 'ON' else 'off' }}" id="pump-banner">
-  <span id="pump-state">{{ latest.pump_decision if latest else 'OFF' }}</span>
-  <span class="reason" id="pump-reason">{{ latest.pump_reason if latest else 'No data yet' }}</span>
-</section>
+<section class="pump-banner {{ 'on' if latest and latest.pump_decision == 'ON' else 'off' }}" id="pump-banner"> 
+  <span id="pump-state">{{ latest.pump_decision if latest else 'OFF' }}</span> 
+  <span class="reason" id="pump-reason">{{ latest.pump_reason if latest else 'No data yet' }}</span> 
+</section> 
 
-<section class="controls">
-  <span class="controls-label">Mode: <strong id="mode-label">{{ control.mode }}</strong></span>
-  <button class="btn auto" onclick="setControl('auto')">Auto</button>
-  <button class="btn on" onclick="setControl('manual_on')">Manual ON</button>
-  <button class="btn off" onclick="setControl('manual_off')">Manual OFF</button>
-</section>
+<section class="controls"> 
+  <span class="controls-label">Mode: <strong id="mode-label">{{ control.mode }}</strong></span> 
+  <button class="btn auto" onclick="setControl('auto')">Auto</button> 
+  <button class="btn on" onclick="setControl('manual_on')">Manual ON</button> 
+  <button class="btn off" onclick="setControl('manual_off')">Manual OFF</button> 
+</section> 
 
-<section class="grid" id="sensor-grid">
-  <div class="card"><span class="num">01</span><h3>Moisture</h3><p id="v-moisture">{{ latest.moisture if latest else '—' }}</p></div>
-  <div class="card"><span class="num">02</span><h3>Soil Temp</h3><p id="v-soil_temp">{{ latest.soil_temp if latest else '—' }} °C</p></div>
-  <div class="card"><span class="num">03</span><h3>pH</h3><p id="v-ph">{{ latest.ph if latest else '—' }}</p></div>
-  <div class="card"><span class="num">04</span><h3>NPK</h3><p id="v-npk">{{ latest.npk_n if latest else '—' }} / {{ latest.npk_p if latest else '—' }} / {{ latest.npk_k if latest else '—' }}</p></div>
-  <div class="card"><span class="num">05</span><h3>DHT (Air)</h3><p id="v-dht">{{ latest.air_temp if latest else '—' }} °C, {{ latest.humidity if latest else '—' }}%</p></div>
-  <div class="card"><span class="num">06</span><h3>Rain</h3><p id="v-rain">{{ 'Detected' if latest and latest.rain_detected else 'None' }}</p></div>
-  <div class="card highlight"><span class="num">07</span><h3>EC</h3><p id="v-ec">{{ latest.ec if latest else '—' }}</p></div>
-</section>
+<section class="grid" id="sensor-grid"> 
+  <div class="card">
+    <span class="num">01</span>
+    <h3>Moisture</h3>
+    <p id="v-moisture">{{ latest.moisture if latest else '—' }}</p>
+    <small id="v-moisture-percent">Soil Moisture: —</small>
+  </div> 
+  <div class="card"><span class="num">02</span><h3>Soil Temp</h3><p id="v-soil_temp">{{ latest.soil_temp if latest else '—' }} °C</p></div> 
+  <div class="card"><span class="num">03</span><h3>pH</h3><p id="v-ph">{{ latest.ph if latest else '—' }}</p></div> 
+  <div class="card"><span class="num">04</span><h3>NPK</h3><p id="v-npk">{{ latest.npk_n if latest else '—' }} / {{ latest.npk_p if latest else '—' }} / {{ latest.npk_k if latest else '—' }}</p></div> 
+  <div class="card"><span class="num">05</span><h3>DHT (Air)</h3><p id="v-dht">{{ latest.air_temp if latest else '—' }} °C, {{ latest.humidity if latest else '—' }}%</p></div> 
+  <div class="card"><span class="num">06</span><h3>Rain</h3><p id="v-rain">{{ 'Detected' if latest and latest.rain_detected else 'None' }}</p></div> 
+  <div class="card highlight"><span class="num">07</span><h3>EC</h3><p id="v-ec">{{ latest.ec if latest else '—' }}</p></div> 
+</section> 
 
-<h2>Field details</h2>
-<form method="POST" action="{{ url_for('save_farm_profile') }}" class="farm-form">
-  <input type="number" step="0.1" name="area_value" value="{{ profile.area_value }}" placeholder="Area">
-  <select name="area_unit">
-    <option value="acre" {{ 'selected' if profile.area_unit == 'acre' }}>Acre</option>
-    <option value="hectare" {{ 'selected' if profile.area_unit == 'hectare' }}>Hectare</option>
-  </select>
-  <input type="text" name="crop_name" value="{{ profile.crop_name }}" placeholder="Current crop (optional)">
-  <button type="submit" class="btn auto">Save</button>
-</form>
+<h2>Field details</h2> 
+<form method="POST" action="{{ url_for('save_farm_profile') }}" class="farm-form"> 
+  <input type="number" step="0.1" name="area_value" value="{{ profile.area_value }}" placeholder="Area"> 
+  <select name="area_unit"> 
+    <option value="acre" {{ 'selected' if profile.area_unit == 'acre' }}>Acre</option> 
+    <option value="hectare" {{ 'selected' if profile.area_unit == 'hectare' }}>Hectare</option> 
+  </select> 
+  <input type="text" name="crop_name" value="{{ profile.crop_name }}" placeholder="Current crop (optional)"> 
+  <button type="submit" class="btn auto">Save</button> 
+</form> 
 
-<h2>AI Farm Advisor</h2>
-<div class="ai-box">
-  <button class="btn on" onclick="getRecommendation()">Get Recommendation</button>
-  <div id="reco-result" class="reco-result"></div>
+<h2>AI Farm Advisor 🤖</h2> 
+<div class="ai-box"> 
+  <button class="btn on" onclick="getRecommendation()">Get Recommendation</button> 
+  <div id="reco-result" class="reco-result"></div> 
 
-  <div class="chat-log" id="chat-log">
-    {% for m in chat_history %}
-      <div class="chat-msg {{ m.role }}"><strong>{{ 'You' if m.role == 'user' else 'AI' }}:</strong> {{ m.content }}</div>
-    {% endfor %}
-  </div>
-  <div class="chat-input">
-    <input type="text" id="chat-question" placeholder="Kuch bhi pooch lo — fertilizer, crop, watering...">
-    <button class="btn auto" onclick="askAI()">Ask</button>
-  </div>
-</div>
+  <div class="chat-log" id="chat-log"> 
+    {% for m in chat_history %} 
+      <div class="chat-msg {{ m.role }}"><strong>{{ 'You' if m.role == 'user' else 'AI' }}:</strong> {{ m.content }}</div> 
+    {% endfor %} 
+  </div> 
+  <div class="chat-input"> 
+    <input type="text" id="chat-question" placeholder="Kuch bhi pooch lo — fertilizer, crop, watering..."> 
+    <button class="btn auto" onclick="askAI()">Ask</button> 
+  </div> 
+</div> 
 
-<h2>Recent history</h2>
-<table class="history">
-  <thead>
-    <tr><th>Time</th><th>Moisture</th><th>pH</th><th>EC</th><th>Air Temp</th><th>Humidity</th><th>Pump</th></tr>
-  </thead>
-  <tbody>
-    {% for r in history %}
-    <tr>
-      <td>{{ r.timestamp.strftime("%Y-%m-%d %H:%M:%S") }}</td>
-      <td>{{ r.moisture }}</td>
-      <td>{{ r.ph }}</td>
-      <td>{{ r.ec }}</td>
-      <td>{{ r.air_temp }}</td>
-      <td>{{ r.humidity }}</td>
-      <td>{{ r.pump_decision }}</td>
-    </tr>
-    {% else %}
-    <tr><td colspan="7">No readings yet — waiting for your ESP32 to send data.</td></tr>
-    {% endfor %}
-  </tbody>
-</table>
+<h2>Recent history</h2> 
+<table class="history"> 
+  <thead> 
+    <tr><th>Time</th><th>Moisture</th><th>pH</th><th>EC</th><th>Air Temp</th><th>Humidity</th><th>Pump</th></tr> 
+  </thead> 
+  <tbody> 
+    {% for r in history %} 
+    <tr> 
+      <td>{{ r.timestamp.strftime("%Y-%m-%d %H:%M:%S") }}</td> 
+      <td>{{ r.moisture }}</td> 
+      <td>{{ r.ph }}</td> 
+      <td>{{ r.ec }}</td> 
+      <td>{{ r.air_temp }}</td> 
+      <td>{{ r.humidity }}</td> 
+      <td>{{ r.pump_decision }}</td> 
+    </tr> 
+    {% else %} 
+    <tr><td colspan="7">No readings yet — waiting for your ESP32 to send data.</td></tr> 
+    {% endfor %} 
+  </tbody> 
+</table> 
 
-<script>
-// Auto-refresh the top cards + pump banner every 10 seconds without reloading the page
-async function setControl(action) {
-  const res = await fetch("{{ url_for('control_pump') }}", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action })
-  });
-  const d = await res.json();
-  document.getElementById("mode-label").textContent = d.mode;
-  refresh();
-}
+<script> 
+// Auto-refresh the top cards + pump banner every 10 seconds without reloading the page 
+async function setControl(action) { 
+  const res = await fetch("{{ url_for('control_pump') }}", { 
+    method: "POST", 
+    headers: { "Content-Type": "application/json" }, 
+    body: JSON.stringify({ action }) 
+  }); 
+  const d = await res.json(); 
+  document.getElementById("mode-label").textContent = d.mode; 
+  refresh(); 
+} 
 
-async function refresh() {
-  try {
-    const res = await fetch("{{ url_for('api_latest') }}");
-    const d = await res.json();
-    if (d.mode) document.getElementById("mode-label").textContent = d.mode;
-    if (!d.timestamp) return;
+async function refresh() { 
+  try { 
+    const res = await fetch("{{ url_for('api_latest') }}"); 
+    const d = await res.json(); 
+    if (d.mode) document.getElementById("mode-label").textContent = d.mode; 
+    if (!d.timestamp) return; 
 
     document.getElementById("v-moisture").textContent = d.moisture ?? "—";
-    document.getElementById("v-soil_temp").textContent = (d.soil_temp ?? "—") + " °C";
-    document.getElementById("v-ph").textContent = d.ph ?? "—";
-    document.getElementById("v-npk").textContent = `${d.npk_n ?? "—"} / ${d.npk_p ?? "—"} / ${d.npk_k ?? "—"}`;
-    document.getElementById("v-dht").textContent = `${d.air_temp ?? "—"} °C, ${d.humidity ?? "—"}%`;
-    document.getElementById("v-rain").textContent = d.rain_detected ? "Detected" : "None";
-    document.getElementById("v-ec").textContent = d.ec ?? "—";
 
-    document.getElementById("pump-state").textContent = d.pump_decision;
-    document.getElementById("pump-reason").textContent = d.pump_reason;
-    const banner = document.getElementById("pump-banner");
-    banner.className = "pump-banner " + (d.pump_decision === "ON" ? "on" : "off");
-  } catch (e) {
-    console.error("refresh failed", e);
-  }
-}
-async function getRecommendation() {
-  const box = document.getElementById("reco-result");
-  box.textContent = "Loading...";
-  try {
-    const res = await fetch("{{ url_for('api_recommendation') }}");
-    const d = await res.json();
-    if (d.error) { box.textContent = d.error; return; }
+    // Soil moisture percentage
+    if (d.moisture !== null && d.moisture !== undefined) {
+      const dryValue = 4095;
+      const wetValue = 1500;
 
-    const f = d.fertilizer;
-    box.innerHTML = `
-      <p><strong>Field size used:</strong> ${f.area_acres} acre</p>
-      <p><strong>Fertilizer needed:</strong> Urea ${f.urea_kg} kg, DAP ${f.dap_kg} kg, MOP ${f.mop_kg} kg</p>
-      <p><strong>N/P/K level:</strong> ${f.n_level} / ${f.p_level} / ${f.k_level}</p>
-      <p><strong>Suggested crops:</strong> ${d.crops.join(", ")}</p>
-      <p class="disclaimer">Approximate estimate for guidance — confirm with local agriculture office before applying.</p>
-    `;
-  } catch (e) {
-    box.textContent = "Could not fetch recommendation.";
-  }
-}
+      let percentage =
+        ((dryValue - d.moisture) / (dryValue - wetValue)) * 100;
 
-async function askAI() {
-  const input = document.getElementById("chat-question");
-  const question = input.value.trim();
-  if (!question) return;
+      percentage = Math.max(0, Math.min(100, percentage));
 
-  const log = document.getElementById("chat-log");
-  log.innerHTML += `<div class="chat-msg user"><strong>You:</strong> ${question}</div>`;
-  input.value = "";
-  log.scrollTop = log.scrollHeight;
+      document.getElementById("v-moisture-percent").textContent =
+        "Soil Moisture: " + percentage.toFixed(1) + "%";
+    } else {
+      document.getElementById("v-moisture-percent").textContent =
+        "Soil Moisture: —";
+    }
 
-  const res = await fetch("{{ url_for('api_ask_ai') }}", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question })
-  });
-  const d = await res.json();
-  log.innerHTML += `<div class="chat-msg ai"><strong>AI:</strong> ${d.answer || d.error}</div>`;
-  log.scrollTop = log.scrollHeight;
-}
+    document.getElementById("v-soil_temp").textContent = (d.soil_temp ?? "—") + " °C"; 
+    document.getElementById("v-ph").textContent = d.ph ?? "—"; 
+    document.getElementById("v-npk").textContent = `${d.npk_n ?? "—"} / ${d.npk_p ?? "—"} / ${d.npk_k ?? "—"}`; 
+    document.getElementById("v-dht").textContent = `${d.air_temp ?? "—"} °C, ${d.humidity ?? "—"}%`; 
+    document.getElementById("v-rain").textContent = d.rain_detected ? "Detected" : "None"; 
+    document.getElementById("v-ec").textContent = d.ec ?? "—"; 
 
-setInterval(refresh, 10000);
-</script>
+    document.getElementById("pump-state").textContent = d.pump_decision; 
+    document.getElementById("pump-reason").textContent = d.pump_reason; 
+    const banner = document.getElementById("pump-banner"); 
+    banner.className = "pump-banner " + (d.pump_decision === "ON" ? "on" : "off"); 
+  } catch (e) { 
+    console.error("refresh failed", e); 
+  } 
+} 
+async function getRecommendation() { 
+  const box = document.getElementById("reco-result"); 
+  box.textContent = "Loading..."; 
+  try { 
+    const res = await fetch("{{ url_for('api_recommendation') }}"); 
+    const d = await res.json(); 
+    if (d.error) { box.textContent = d.error; return; } 
+
+    const f = d.fertilizer; 
+    box.innerHTML = ` 
+      <p><strong>Field size used:</strong> ${f.area_acres} acre</p> 
+      <p><strong>Fertilizer needed:</strong> Urea ${f.urea_kg} kg, DAP ${f.dap_kg} kg, MOP ${f.mop_kg} kg</p> 
+      <p><strong>N/P/K level:</strong> ${f.n_level} / ${f.p_level} / ${f.k_level}</p> 
+      <p><strong>Suggested crops:</strong> ${d.crops.join(", ")}</p> 
+      <p class="disclaimer">Approximate estimate for guidance — confirm with local agriculture office before applying.</p> 
+    `; 
+  } catch (e) { 
+    box.textContent = "Could not fetch recommendation."; 
+  } 
+} 
+
+async function askAI() { 
+  const input = document.getElementById("chat-question"); 
+  const question = input.value.trim(); 
+  if (!question) return; 
+
+  const log = document.getElementById("chat-log"); 
+  log.innerHTML += `<div class="chat-msg user"><strong>You:</strong> ${question}</div>`; 
+  input.value = ""; 
+  log.scrollTop = log.scrollHeight; 
+
+  const res = await fetch("{{ url_for('api_ask_ai') }}", { 
+    method: "POST", 
+    headers: { "Content-Type": "application/json" }, 
+    body: JSON.stringify({ question }) 
+  }); 
+  const d = await res.json(); 
+  log.innerHTML += `<div class="chat-msg ai"><strong>AI:</strong> ${d.answer || d.error}</div>`; 
+  log.scrollTop = log.scrollHeight; 
+} 
+
+setInterval(refresh, 10000); 
+</script> 
 {% endblock %}
