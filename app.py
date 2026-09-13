@@ -32,7 +32,7 @@ if _db_url.startswith("postgres://"):
 app.config["SQLALCHEMY_DATABASE_URI"] = _db_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-WEATHER_CITY = os.getenv("WEATHER_CITY", "Lucknow")
+WEATHER_CITY = os.getenv("WEATHER_CITY", "jaipur")
 
 
 # ---------------------------------------------------------------------------
