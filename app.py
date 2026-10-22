@@ -536,12 +536,17 @@ def ask_ai(question, context_summary):
         )
 
     prompt = (
-        "You are an agricultural assistant helping an Indian farmer using an IoT soil "
-        "monitoring system. Answer briefly and practically, in simple Hindi/Hinglish where natural.\n\n"
-        f"Current farm context:\n{context_summary}\n\n"
-        f"Farmer's question: {question}"
-    )
-
+    "You are an agricultural assistant helping an Indian farmer using an IoT soil "
+    "monitoring system. Answer briefly and practically, in simple Hindi/Hinglish where natural.\n\n"
+    "If a question is not related to farming, still answer it directly and accurately "
+    "using your general knowledge, like a normal helpful AI assistant would. However, "
+    "never invent or fabricate details about anything you don't actually know, or that "
+    "doesn't exist in your sensor data / system context (such as unfamiliar names, terms, "
+    "or devices). In such cases, clearly say \"I don't have information about that\" or "
+    "ask the user to clarify — never guess confidently.\n\n"
+    f"Current farm context:\n{context_summary}\n\n"
+    f"Farmer's question: {question}"
+)
     last_error = "unknown error"
     for provider in (_ask_gemini, _ask_groq, _ask_openrouter):
         result, error = provider(prompt)
