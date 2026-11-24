@@ -74,19 +74,10 @@
         </thead>
         <tbody>
           {% if control %}
-            {% if control.mode is defined %}
             <tr>
               <td>{{ control.mode }}</td>
               <td>{{ control.manual_state }}</td>
             </tr>
-            {% else %}
-              {% for c in control %}
-              <tr>
-                <td>{{ c.mode }}</td>
-                <td>{{ c.manual_state }}</td>
-              </tr>
-              {% endfor %}
-            {% endif %}
           {% else %}
           <tr>
             <td colspan="2">No pump control state found.</td>
@@ -101,24 +92,6 @@
     <h2>Recent Sensor Readings (Last 50)</h2>
     <div style="overflow-x: auto;">
       <table class="admin-table">
-        {% if readings and readings[0].keys is defined and readings[0].keys is callable %}
-        <thead>
-          <tr>
-            {% for col in readings[0].keys() %}
-            <th>{{ col }}</th>
-            {% endfor %}
-          </tr>
-        </thead>
-        <tbody>
-          {% for r in readings[:50] %}
-          <tr>
-            {% for col in readings[0].keys() %}
-            <td>{{ r[col] }}</td>
-            {% endfor %}
-          </tr>
-          {% endfor %}
-        </tbody>
-        {% else %}
         <thead>
           <tr>
             <th>ID</th>
@@ -159,7 +132,6 @@
           </tr>
           {% endfor %}
         </tbody>
-        {% endif %}
       </table>
     </div>
   </div>

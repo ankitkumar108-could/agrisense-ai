@@ -1,6 +1,34 @@
-{% extends "base.html" %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard — AgriSense AI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="top-bar">
+      <div class="brand">🌱 AgriSense AI</div>
+      <div class="user-info">
+        <span class="user-email">{{ current_user.email }}</span>
+        <a href="{{ url_for('logout') }}" class="logout-link">Logout</a>
+      </div>
+    </header>
 
-{% block content %}
+    <main class="main-content">
+      {% with messages = get_flashed_messages() %}
+        {% if messages %}
+          <div class="flash" role="alert">
+            {% for message in messages %}
+              <p>{{ message }}</p>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
 
 {# ═══════════════════ INLINE DASHBOARD STYLES ═══════════════════ #}
 <style>
@@ -60,6 +88,7 @@
     font-size: 11px;
     font-weight: 600;
   }
+  .status-neutral { background: #e5e7eb; color: #4b5563; }
   .status-good   { background: #d1fae5; color: #065f46; }
   .status-warning { background: #fef3c7; color: #92400e; }
   .status-critical{ background: #fee2e2; color: #991b1b; }
@@ -881,7 +910,7 @@
     <h3>ℹ️ About AgriSense AI</h3>
     <p><strong>Version:</strong> 2.0.0</p>
     <p>Smart farming dashboard powered by IoT sensors, real-time analytics, and AI-driven recommendations.</p>
-    <p style="margin-top:4px;">Built with Flask · Three.js · Chart.js</p>
+    <p style="margin-top:4px;"><strong>Built by Tech Titans</strong></p>
   </div>
 
   {% if current_user.is_authenticated %}
@@ -890,29 +919,58 @@
 
 </div>{# /tab-settings #}
 
-{% endblock %}
+
 
 
 {# ══════════════════════════════════════════════════════════════════
    SCRIPTS
    ══════════════════════════════════════════════════════════════════ #}
-{% block scripts %}
+    </main>
+
+    <nav class="bottom-nav" aria-label="Primary navigation">
+      <button type="button" class="nav-item active" data-tab="home">
+        <span class="nav-icon" aria-hidden="true">🏠</span>
+        <span class="nav-label">Home</span>
+      </button>
+      <button type="button" class="nav-item" data-tab="sensors">
+        <span class="nav-icon" aria-hidden="true">📊</span>
+        <span class="nav-label">Sensors</span>
+      </button>
+      <button type="button" class="nav-item" data-tab="device">
+        <span class="nav-icon" aria-hidden="true">📱</span>
+        <span class="nav-label">Device</span>
+      </button>
+      <button type="button" class="nav-item" data-tab="analytics">
+        <span class="nav-icon" aria-hidden="true">📈</span>
+        <span class="nav-label">Analytics</span>
+      </button>
+      <button type="button" class="nav-item" data-tab="settings">
+        <span class="nav-icon" aria-hidden="true">⚙️</span>
+        <span class="nav-label">Settings</span>
+      </button>
+    </nav>
+  </div>
+
+  <script>
+    document.querySelectorAll('.bottom-nav .nav-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const panel = document.getElementById('tab-' + item.dataset.tab);
+        if (!panel) return;
+        document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+        document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+        item.classList.add('active');
+        panel.classList.add('active');
+        window.dispatchEvent(new Event('resize'));
+      });
+    });
+  </script>
 
 {# CDN Libraries #}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <script>
 {% raw %}
-/**
- * Smart Soil Monitoring Device - Interactive 3D Model (Three.js Global Build)
- *
- * Required CDN script tags (include in your HTML before this script):
- * <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
- * <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
- *
- * Usage:
- *   initDevice3D('device-3d-canvas');
- */
+/* Smart Soil Monitoring Device - Interactive 3D Model */
 
 (function (global) {
   'use strict';
@@ -1918,14 +1976,14 @@
   }
 
   function getMoistureStatus(pct) {
-    if (pct == null) return 'warning';
+    if (pct == null) return 'neutral';
     if (pct < 20) return 'critical';
     if (pct < 40) return 'warning';
     return 'good';
   }
 
   function getPhStatus(val) {
-    if (val == null) return 'warning';
+    if (val == null) return 'neutral';
     val = parseFloat(val);
     if (val < 5.5 || val > 8.5) return 'critical';
     if (val < 6.0 || val > 7.5) return 'warning';
@@ -1933,7 +1991,7 @@
   }
 
   function getTempStatus(val) {
-    if (val == null) return 'warning';
+    if (val == null) return 'neutral';
     val = parseFloat(val);
     if (val < 10 || val > 40) return 'critical';
     if (val < 15 || val > 35) return 'warning';
@@ -1941,7 +1999,7 @@
   }
 
   function getECStatus(val) {
-    if (val == null) return 'warning';
+    if (val == null) return 'neutral';
     val = parseFloat(val);
     // Support both dS/m (0.5 - 4.0) and µS/cm (> 20)
     if (val > 20) {
@@ -1955,6 +2013,7 @@
   }
 
   function getNPKStatus(n, p, k) {
+    if (n == null && p == null && k == null) return 'neutral';
     n = parseFloat(n) || 0;
     p = parseFloat(p) || 0;
     k = parseFloat(k) || 0;
@@ -1964,13 +2023,13 @@
   }
 
   function getRainStatus(val) {
-    if (val == null) return 'warning';
+    if (val == null) return 'neutral';
     val = parseFloat(val);
     return val > 500 ? 'good' : (val > 300 ? 'warning' : 'critical');
   }
 
   function statusLabel(status) {
-    return status === 'good' ? 'Good' : status === 'warning' ? 'Low' : 'Critical';
+    return status === 'good' ? 'Good' : status === 'warning' ? 'Low' : status === 'critical' ? 'Critical' : 'Waiting';
   }
 
   function setBadge(el, status) {
@@ -1982,6 +2041,25 @@
   /* ─────────────────────────────────────────────────
      2. AUTO-REFRESH — Sensor Data (every 10s)
      ───────────────────────────────────────────────── */
+  const INITIAL_HISTORY = [
+    {% for r in history %}
+    {
+      timestamp: "{{ r.timestamp.isoformat() if r.timestamp else '' }}",
+      moisture: {{ r.moisture if r.moisture is not none else 'null' }},
+      soil_temp: {{ r.soil_temp if r.soil_temp is not none else 'null' }},
+      ph: {{ r.ph if r.ph is not none else 'null' }},
+      ec: {{ r.ec if r.ec is not none else 'null' }},
+      npk_n: {{ r.npk_n if r.npk_n is not none else 'null' }},
+      npk_p: {{ r.npk_p if r.npk_p is not none else 'null' }},
+      npk_k: {{ r.npk_k if r.npk_k is not none else 'null' }},
+      air_temp: {{ r.air_temp if r.air_temp is not none else 'null' }},
+      humidity: {{ r.humidity if r.humidity is not none else 'null' }},
+      rain_detected: {{ 'true' if r.rain_detected else 'false' }},
+      pump_decision: "{{ r.pump_decision or '' }}"
+    }{{ ',' if not loop.last }}
+    {% endfor %}
+  ];
+
   function fetchLatest() {
     fetch("{{ url_for('api_latest') }}")
       .then(r => r.json())
@@ -1990,6 +2068,8 @@
         window.__agrisenseLatest = d;
         updateSensorUI(d);
         updateAlerts(d);
+        fetchHealthScore();
+        fetchCropMatch();
       })
       .catch(e => console.warn('fetchLatest error:', e));
   }
@@ -2077,10 +2157,36 @@
   /* ─────────────────────────────────────────────────
      3. HEALTH SCORE
      ───────────────────────────────────────────────── */
+  function computeClientHealth(d) {
+    if (!d || d.moisture == null) return { score: 0, label: 'No Data' };
+    let score = 0;
+    const m = parseFloat(d.moisture);
+    if (m >= 1500 && m <= 3000) score += 20; else if (m > 0) score += 10;
+    const ph = parseFloat(d.ph);
+    if (!isNaN(ph)) score += (ph >= 6.0 && ph <= 7.5) ? 20 : Math.max(0, 20 - Math.abs(ph - 6.75) * 6);
+    const ec = parseFloat(d.ec);
+    if (!isNaN(ec)) score += (ec >= 0.5 && ec <= 2.0) ? 20 : 10;
+    const t = parseFloat(d.soil_temp);
+    if (!isNaN(t)) score += (t >= 18 && t <= 30) ? 20 : 10;
+    const nOk = (d.npk_n || 0) > 40 ? 1 : 0;
+    const pOk = (d.npk_p || 0) > 20 ? 1 : 0;
+    const kOk = (d.npk_k || 0) > 40 ? 1 : 0;
+    score += 20 * ((nOk + pOk + kOk) / 3);
+    const s = Math.round(score);
+    return { score: s, label: s >= 75 ? 'Good' : s >= 50 ? 'Fair' : 'Poor' };
+  }
+
   function fetchHealthScore() {
-    fetch("{{ url_for('get_health_score') }}")
-      .then(r => r.json())
+    fetch("/api/health-score")
+      .then(r => { if (!r.ok) throw new Error('fallback'); return r.json(); })
       .then(d => {
+        if (d.label === 'No Data') {
+          setText('health-score-value', '—');
+          setText('health-score-display', '—');
+          setText('health-score-label', 'Waiting for sensor');
+          setText('analytics-health-score', '—');
+          return;
+        }
         const score = d.score != null ? d.score : 0;
         const circumference = 2 * Math.PI * 38; // 238.76
         const offset = circumference - (score / 100) * circumference;
@@ -2091,7 +2197,7 @@
         setText('health-score-value', score + '%');
         setText('health-score-display', score + '%');
 
-        let label = 'Poor';
+        let label = d.label || 'Poor';
         if (score >= 80) label = 'Excellent';
         else if (score >= 60) label = 'Good';
         else if (score >= 40) label = 'Fair';
@@ -2100,8 +2206,21 @@
         setText('analytics-health-score', score);
       })
       .catch(() => {
-        setText('health-score-value', '—');
-        setText('health-score-label', 'Unavailable');
+        if (latestData && latestData.moisture != null) {
+          const res = computeClientHealth(latestData);
+          const circumference = 2 * Math.PI * 38;
+          const ring = $('health-ring');
+          if (ring) ring.setAttribute('stroke-dashoffset', circumference - (res.score / 100) * circumference);
+          setText('health-score-value', res.score + '%');
+          setText('health-score-display', res.score + '%');
+          setText('health-score-label', res.label);
+          setText('analytics-health-score', res.score);
+        } else {
+          setText('health-score-value', '—');
+          setText('health-score-display', '—');
+          setText('health-score-label', 'Waiting for sensor');
+          setText('analytics-health-score', '—');
+        }
       });
   }
 
@@ -2123,14 +2242,36 @@
   };
 
   /* ─────────────────────────────────────────────────
-     5. TASKS CRUD
+     5. TASKS CRUD (API with localStorage fallback)
      ───────────────────────────────────────────────── */
+  let useLocalTasks = false;
+
+  function getLocalTasks() {
+    try {
+      const raw = localStorage.getItem('agrisense_tasks');
+      if (raw) return JSON.parse(raw);
+    } catch (e) {}
+    const defaults = [
+      { id: 1, title: 'Watering', description: 'Check moisture and irrigate if low', completed: false },
+      { id: 2, title: 'Fertilizing', description: 'Apply recommended NPK dosage', completed: false },
+      { id: 3, title: 'Soil Check', description: 'Verify pH and probe contact', completed: false }
+    ];
+    saveLocalTasks(defaults);
+    return defaults;
+  }
+
+  function saveLocalTasks(tasks) {
+    try { localStorage.setItem('agrisense_tasks', JSON.stringify(tasks)); } catch (e) {}
+  }
+
   function loadTasks() {
-    fetch("{{ url_for('get_tasks') }}")
-      .then(r => r.json())
+    if (useLocalTasks) { renderTasks(getLocalTasks()); return; }
+    fetch("/api/tasks")
+      .then(r => { if (!r.ok) throw new Error('no_api'); return r.json(); })
       .then(tasks => renderTasks(tasks))
       .catch(() => {
-        $('task-container').innerHTML = '<p style="font-size:13px;color:var(--text-muted);">Unable to load tasks.</p>';
+        useLocalTasks = true;
+        renderTasks(getLocalTasks());
       });
   }
 
@@ -2173,69 +2314,122 @@
     const title = titleEl.value.trim();
     if (!title) return;
 
-    fetch("{{ url_for('create_task') }}", {
+    if (useLocalTasks) {
+      const tasks = getLocalTasks();
+      tasks.unshift({ id: Date.now(), title: title, description: '', completed: false });
+      saveLocalTasks(tasks);
+      titleEl.value = '';
+      renderTasks(tasks);
+      return;
+    }
+
+    fetch("/api/tasks", {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: title, description: '' })
     })
-    .then(r => r.json())
+    .then(r => { if (!r.ok) throw new Error('no_api'); return r.json(); })
     .then(() => { titleEl.value = ''; loadTasks(); })
-    .catch(e => alert('Error adding task: ' + e));
+    .catch(() => {
+      useLocalTasks = true;
+      window.addTask();
+    });
   };
 
   window.toggleTask = function (id) {
-    fetch("{{ url_for('get_tasks') }}/" + id + "/toggle", { method: 'POST' })
-      .then(() => loadTasks())
-      .catch(e => alert('Error toggling task: ' + e));
+    if (useLocalTasks) {
+      const tasks = getLocalTasks().map(t => t.id === id ? { ...t, completed: !t.completed } : t);
+      saveLocalTasks(tasks);
+      renderTasks(tasks);
+      return;
+    }
+    fetch("/api/tasks/" + id + "/toggle", { method: 'POST' })
+      .then(r => { if (!r.ok) throw new Error('no_api'); loadTasks(); })
+      .catch(() => { useLocalTasks = true; window.toggleTask(id); });
   };
 
   window.deleteTask = function (id) {
     if (!confirm('Delete this task?')) return;
-    fetch("{{ url_for('get_tasks') }}/" + id, { method: 'DELETE' })
-      .then(() => loadTasks())
-      .catch(e => alert('Error deleting task: ' + e));
+    if (useLocalTasks) {
+      const tasks = getLocalTasks().filter(t => t.id !== id);
+      saveLocalTasks(tasks);
+      renderTasks(tasks);
+      return;
+    }
+    fetch("/api/tasks/" + id, { method: 'DELETE' })
+      .then(r => { if (!r.ok) throw new Error('no_api'); loadTasks(); })
+      .catch(() => { useLocalTasks = true; window.deleteTask(id); });
   };
 
   /* ─────────────────────────────────────────────────
      6. CROP RECOMMENDATIONS
      ───────────────────────────────────────────────── */
+  function computeClientCrops(d) {
+    const crops = [
+      { name: 'Tomato', emoji: '🍅', ph: [6.0, 7.0], ec: [1.0, 2.5], temp: [18, 28] },
+      { name: 'Chilli', emoji: '🌶️', ph: [6.0, 7.0], ec: [0.8, 2.0], temp: [20, 32] },
+      { name: 'Peas', emoji: '🫛', ph: [6.0, 7.5], ec: [0.5, 1.5], temp: [13, 22] },
+      { name: 'Beans', emoji: '🫘', ph: [6.0, 7.0], ec: [0.5, 1.2], temp: [18, 27] },
+      { name: 'Brinjal', emoji: '🍆', ph: [5.5, 6.8], ec: [0.8, 2.0], temp: [20, 30] }
+    ];
+    if (!d) return crops.map((c, i) => ({ name: c.name, emoji: c.emoji, match_pct: 85 - i * 4 }));
+    const ph = parseFloat(d.ph), ec = parseFloat(d.ec), temp = parseFloat(d.soil_temp ?? d.air_temp);
+    const score = (val, [min, max], span) => {
+      if (isNaN(val)) return 80;
+      if (val >= min && val <= max) return 100;
+      const dist = val < min ? (min - val) : (val - max);
+      return Math.max(20, Math.round(100 - (dist / span) * 100));
+    };
+    return crops.map(c => ({
+      name: c.name,
+      emoji: c.emoji,
+      match_pct: Math.round((score(ph, c.ph, 3) + score(ec, c.ec, 2.5) + score(temp, c.temp, 15)) / 3)
+    })).sort((a, b) => b.match_pct - a.match_pct);
+  }
+
+  function renderCrops(crops) {
+    const c = $('crop-container');
+    if (!crops || crops.length === 0) {
+      c.innerHTML = '<p style="font-size:13px;color:var(--text-muted);grid-column:1/-1;">No recommendations yet.</p>';
+      return;
+    }
+    c.innerHTML = crops.map(crop => {
+      const emoji = crop.emoji || crop.image_url || '🌾';
+      return `
+        <div class="crop-card">
+          <div class="crop-emoji">${emoji}</div>
+          <div class="crop-name">${escHTML(crop.name)}</div>
+          <div class="match-bar"><div class="match-fill" style="width:${crop.match_pct}%;"></div></div>
+          <div class="match-pct">${crop.match_pct}% match</div>
+        </div>`;
+    }).join('');
+  }
+
   function fetchCropMatch() {
-    fetch("{{ url_for('get_crop_match') }}")
-      .then(r => r.json())
-      .then(crops => {
-        const c = $('crop-container');
-        if (!crops || crops.length === 0) {
-          c.innerHTML = '<p style="font-size:13px;color:var(--text-muted);grid-column:1/-1;">No recommendations yet.</p>';
-          return;
-        }
-        c.innerHTML = crops.map(crop => {
-          const emoji = crop.emoji || crop.image_url || '🌾';
-          return `
-            <div class="crop-card">
-              <div class="crop-emoji">${emoji}</div>
-              <div class="crop-name">${escHTML(crop.name)}</div>
-              <div class="match-bar"><div class="match-fill" style="width:${crop.match_pct}%;"></div></div>
-              <div class="match-pct">${crop.match_pct}% match</div>
-            </div>`;
-        }).join('');
-      })
-      .catch(() => {
-        $('crop-container').innerHTML = '<p style="font-size:13px;color:var(--text-muted);grid-column:1/-1;">Unable to load.</p>';
-      });
+    fetch("/api/crop-match")
+      .then(r => { if (!r.ok) throw new Error('no_api'); return r.json(); })
+      .then(crops => renderCrops(crops))
+      .catch(() => renderCrops(computeClientCrops(latestData)));
   }
 
   /* ─────────────────────────────────────────────────
      7. CHARTS (Chart.js)
      ───────────────────────────────────────────────── */
   function fetchHistory() {
-    fetch("{{ url_for('get_history') }}?limit=50")
-      .then(r => r.json())
+    fetch("/api/history?limit=50")
+      .then(r => { if (!r.ok) throw new Error('no_api'); return r.json(); })
       .then(data => {
-        if (!data || data.length === 0) return;
-        renderCharts(data);
-        renderHistoryTable(data);
+        const rows = (data && data.length > 0) ? data : INITIAL_HISTORY;
+        if (!rows || rows.length === 0) return;
+        renderCharts(rows);
+        renderHistoryTable(rows);
       })
-      .catch(e => console.warn('fetchHistory:', e));
+      .catch(() => {
+        if (INITIAL_HISTORY && INITIAL_HISTORY.length > 0) {
+          renderCharts(INITIAL_HISTORY);
+          renderHistoryTable(INITIAL_HISTORY);
+        }
+      });
   }
 
   function renderCharts(data) {
@@ -2500,7 +2694,12 @@
      11. SMART ALERTS
      ───────────────────────────────────────────────── */
   function updateAlerts(d) {
-    if (!d) return;
+    const container = $('alert-container');
+    if (!container) return;
+    if (!d || (d.moisture == null && d.ph == null && d.npk_n == null)) {
+      container.innerHTML = '<div class="alert-bar alert-good">📡 Waiting for live sensor reading from Sensor Node-01…</div>';
+      return;
+    }
     const alerts = [];
 
     const moistPct = getMoisturePercent(d.moisture);
@@ -2517,20 +2716,14 @@
       alerts.push({ type: 'warning', msg: '🧪 pH slightly off-optimal (' + ph.toFixed(1) + '). Monitor closely.' });
     }
 
-    const n = parseFloat(d.npk_n) || 0;
-    const p = parseFloat(d.npk_p) || 0;
-    const k = parseFloat(d.npk_k) || 0;
-    if (n < 20) alerts.push({ type: 'warning', msg: '🟢 Nitrogen level low (' + n + ' mg/kg). Consider nitrogen supplementation.' });
-    if (p < 10) alerts.push({ type: 'warning', msg: '🔵 Phosphorus level low (' + p + ' mg/kg). Phosphorus fertilizer recommended.' });
-    if (k < 10) alerts.push({ type: 'warning', msg: '🟠 Potassium level low (' + k + ' mg/kg). Add potassium supplement.' });
+    if (d.npk_n != null && parseFloat(d.npk_n) < 20) alerts.push({ type: 'warning', msg: '🟢 Nitrogen level low (' + d.npk_n + ' mg/kg). Consider nitrogen supplementation.' });
+    if (d.npk_p != null && parseFloat(d.npk_p) < 10) alerts.push({ type: 'warning', msg: '🔵 Phosphorus level low (' + d.npk_p + ' mg/kg). Phosphorus fertilizer recommended.' });
+    if (d.npk_k != null && parseFloat(d.npk_k) < 10) alerts.push({ type: 'warning', msg: '🟠 Potassium level low (' + d.npk_k + ' mg/kg). Add potassium supplement.' });
 
     const temp = parseFloat(d.soil_temp);
     if (!isNaN(temp) && (temp > 40 || temp < 10)) {
       alerts.push({ type: 'critical', msg: '🌡️ Soil temperature extreme (' + temp + '°C). Protect crops.' });
     }
-
-    const container = $('alert-container');
-    if (!container) return;
 
     if (alerts.length === 0) {
       container.innerHTML = '<div class="alert-bar alert-good">✅ All systems normal — sensors within optimal range.</div>';
@@ -2576,14 +2769,20 @@
     /* Auto-refresh every 10 seconds */
     setInterval(fetchLatest, 10000);
 
-    /* Init 3D (deferred so canvas is in DOM) */
-    setTimeout(() => {
-      if (typeof window.initDevice3D === 'function') {
+    /* Init 3D lazily or on load + resize when Device tab opens */
+    function ensureDevice3D() {
+      if (!device3dController && typeof window.initDevice3D === 'function') {
         device3dController = window.initDevice3D('device-3d-canvas');
       }
-    }, 300);
+      setTimeout(() => window.dispatchEvent(new Event('resize')), 60);
+    }
+    const devBtn = document.querySelector('.nav-item[data-tab="device"]');
+    if (devBtn) devBtn.addEventListener('click', ensureDevice3D);
+    setTimeout(ensureDevice3D, 300);
   });
 
 })();
 </script>
-{% endblock %}
+
+</body>
+</html>
