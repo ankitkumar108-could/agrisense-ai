@@ -1,190 +1,2589 @@
-{% extends "base.html" %} 
-{% block title %}Dashboard — Agrisense_Ai{% endblock %} 
-{% block content %} 
+{% extends "base.html" %}
 
-<h1>Seven Sensors. One Living Soil Profile.</h1> 
+{% block content %}
 
-<section class="weather-box"> 
-  {% if weather.available %} 
-    <strong>Weather in {{ weather.get('Jaipur', '') }}:</strong> 
-    {{ weather.description }}, {{ weather.temp }}°C, humidity {{ weather.humidity }}% 
-    — rain chance ~{{ weather.rain_probability }}% 
-  {% else %} 
-    <strong>Weather:</strong> unavailable ({{ weather.reason }}) 
-  {% endif %} 
-</section> 
+{# ═══════════════════ INLINE DASHBOARD STYLES ═══════════════════ #}
+<style>
+  :root {
+    --bg-page: #f0f5f1;
+    --bg-white: #ffffff;
+    --emerald: #10b981;
+    --emerald-dark: #059669;
+    --forest: #0f3d26;
+    --forest-mid: #1a4731;
+    --lime: #84cc16;
+    --text-dark: #1a2e22;
+    --text-muted: #6b7a70;
+    --danger: #ef4444;
+    --warning: #f59e0b;
+    --good: #10b981;
+    --card-shadow: 0 2px 16px rgba(0,0,0,0.06);
+    --card-radius: 16px;
+  }
 
-<section class="pump-banner {{ 'on' if latest and latest.pump_decision == 'ON' else 'off' }}" id="pump-banner"> 
-  <span id="pump-state">{{ latest.pump_decision if latest else 'OFF' }}</span> 
-  <span class="reason" id="pump-reason">{{ latest.pump_reason if latest else 'No data yet' }}</span> 
-</section> 
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-<section class="controls"> 
-  <span class="controls-label">Mode: <strong id="mode-label">{{ control.mode }}</strong></span> 
-  <button class="btn auto" onclick="setControl('auto')">Auto</button> 
-  <button class="btn on" onclick="setControl('manual_on')">Manual ON</button> 
-  <button class="btn off" onclick="setControl('manual_off')">Manual OFF</button> 
-</section> 
+  body {
+    font-family: 'Inter', sans-serif;
+    background: var(--bg-page);
+    color: var(--text-dark);
+    min-height: 100vh;
+    padding-bottom: 80px;
+  }
 
-<section class="grid" id="sensor-grid"> 
-  <div class="card">
-    <span class="num">01</span>
-    <h3>Moisture</h3>
-    <p id="v-moisture">{{ latest.moisture if latest else '—' }}</p>
-    <small id="v-moisture-percent">Soil Moisture: —</small>
-  </div> 
-  <div class="card"><span class="num">02</span><h3>Soil Temp</h3><p id="v-soil_temp">{{ latest.soil_temp if latest else '—' }} °C</p></div> 
-  <div class="card"><span class="num">03</span><h3>pH</h3><p id="v-ph">{{ latest.ph if latest else '—' }}</p></div> 
-  <div class="card"><span class="num">04</span><h3>NPK</h3><p id="v-npk">{{ latest.npk_n if latest else '—' }} / {{ latest.npk_p if latest else '—' }} / {{ latest.npk_k if latest else '—' }}</p></div> 
-  <div class="card"><span class="num">05</span><h3>DHT (Air)</h3><p id="v-dht">{{ latest.air_temp if latest else '—' }} °C, {{ latest.humidity if latest else '—' }}%</p></div> 
-  <div class="card"><span class="num">06</span><h3>Rain</h3><p id="v-rain">{{ 'Detected' if latest and latest.rain_detected else 'None' }}</p></div> 
-  <div class="card highlight"><span class="num">07</span><h3>EC</h3><p id="v-ec">{{ latest.ec if latest else '—' }}</p></div> 
-</section> 
+  /* ── Tab panels ────────────────────────────────── */
+  .tab-panel { display: none; padding: 16px; max-width: 480px; margin: 0 auto; }
+  .tab-panel.active { display: block; }
 
-<h2>Field details</h2> 
-<form method="POST" action="{{ url_for('save_farm_profile') }}" class="farm-form"> 
-  <input type="number" step="0.1" name="area_value" value="{{ profile.area_value }}" placeholder="Area"> 
-  <select name="area_unit"> 
-    <option value="acre" {{ 'selected' if profile.area_unit == 'acre' }}>Acre</option> 
-    <option value="hectare" {{ 'selected' if profile.area_unit == 'hectare' }}>Hectare</option> 
-  </select> 
-  <input type="text" name="crop_name" value="{{ profile.crop_name }}" placeholder="Current crop (optional)"> 
-  <button type="submit" class="btn auto">Save</button> 
-</form> 
+  /* ── Cards ─────────────────────────────────────── */
+  .card {
+    background: var(--bg-white);
+    border-radius: var(--card-radius);
+    box-shadow: var(--card-shadow);
+    padding: 16px;
+    margin-bottom: 14px;
+  }
+  .card-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: .4px;
+    margin-bottom: 10px;
+  }
 
-<h2>AI Farm Advisor 🤖</h2> 
-<div class="ai-box"> 
-  <button class="btn on" onclick="getRecommendation()">Get Recommendation</button> 
-  <div id="reco-result" class="reco-result"></div> 
+  /* ── Status badges ─────────────────────────────── */
+  .badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .status-good   { background: #d1fae5; color: #065f46; }
+  .status-warning { background: #fef3c7; color: #92400e; }
+  .status-critical{ background: #fee2e2; color: #991b1b; }
 
-  <div class="chat-log" id="chat-log"> 
-    {% for m in chat_history %} 
-      <div class="chat-msg {{ m.role }}"><strong>{{ 'You' if m.role == 'user' else 'AI' }}:</strong> {{ m.content }}</div> 
-    {% endfor %} 
-  </div> 
-  <div class="chat-input"> 
-    <input type="text" id="chat-question" placeholder="Kuch bhi pooch lo — fertilizer, crop, watering..."> 
-    <button class="btn auto" onclick="askAI()">Ask</button> 
-  </div> 
-</div> 
+  /* ── Weather section ───────────────────────────── */
+  .weather-section {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+    padding: 14px 16px;
+    background: var(--bg-white);
+    border-radius: var(--card-radius);
+    box-shadow: var(--card-shadow);
+  }
+  .weather-section .weather-icon { font-size: 28px; }
+  .weather-section .weather-info { flex: 1; }
+  .weather-section .weather-info h3 { font-size: 14px; font-weight: 600; }
+  .weather-section .weather-info p  { font-size: 12px; color: var(--text-muted); }
+  .weather-section .weather-temp { font-size: 28px; font-weight: 700; color: var(--forest); }
 
-<h2>Recent history</h2> 
-<table class="history"> 
-  <thead> 
-    <tr><th>Time</th><th>Moisture</th><th>pH</th><th>EC</th><th>Air Temp</th><th>Humidity</th><th>Pump</th></tr> 
-  </thead> 
-  <tbody> 
-    {% for r in history %} 
-    <tr> 
-      <td>{{ r.timestamp.strftime("%Y-%m-%d %H:%M:%S") }}</td> 
-      <td>{{ r.moisture }}</td> 
-      <td>{{ r.ph }}</td> 
-      <td>{{ r.ec }}</td> 
-      <td>{{ r.air_temp }}</td> 
-      <td>{{ r.humidity }}</td> 
-      <td>{{ r.pump_decision }}</td> 
-    </tr> 
-    {% else %} 
-    <tr><td colspan="7">No readings yet — waiting for your ESP32 to send data.</td></tr> 
-    {% endfor %} 
-  </tbody> 
-</table> 
+  /* ── Health card ───────────────────────────────── */
+  .health-card {
+    background: linear-gradient(135deg, var(--emerald) 0%, var(--emerald-dark) 100%);
+    border-radius: var(--card-radius);
+    box-shadow: var(--card-shadow);
+    padding: 20px;
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    color: #fff;
+  }
+  .health-card .health-label { font-size: 13px; font-weight: 500; opacity: .85; }
+  .health-card .health-value { font-size: 32px; font-weight: 700; }
+  .health-card .health-status { font-size: 14px; font-weight: 500; opacity: .9; }
+  .health-ring-wrap { position: relative; width: 90px; height: 90px; flex-shrink: 0; }
+  .health-ring-wrap .ring-text {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 20px; font-weight: 700;
+  }
 
-<script> 
-// Auto-refresh the top cards + pump banner every 10 seconds without reloading the page 
-async function setControl(action) { 
-  const res = await fetch("{{ url_for('control_pump') }}", { 
-    method: "POST", 
-    headers: { "Content-Type": "application/json" }, 
-    body: JSON.stringify({ action }) 
-  }); 
-  const d = await res.json(); 
-  document.getElementById("mode-label").textContent = d.mode; 
-  refresh(); 
-} 
+  /* ── Sensor grid ───────────────────────────────── */
+  .sensor-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .sensor-card {
+    background: var(--bg-white);
+    border-radius: var(--card-radius);
+    box-shadow: var(--card-shadow);
+    padding: 14px;
+  }
+  .sensor-card .sensor-icon { font-size: 22px; margin-bottom: 6px; }
+  .sensor-card .sensor-label { font-size: 11px; color: var(--text-muted); font-weight: 500; }
+  .sensor-card .sensor-value { font-size: 20px; font-weight: 700; margin: 2px 0; }
+  .sensor-card .badge { margin-top: 4px; }
 
-async function refresh() { 
-  try { 
-    const res = await fetch("{{ url_for('api_latest') }}"); 
-    const d = await res.json(); 
-    if (d.mode) document.getElementById("mode-label").textContent = d.mode; 
-    if (!d.timestamp) return; 
+  /* ── Node info ─────────────────────────────────── */
+  .node-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--bg-white);
+    border-radius: var(--card-radius);
+    box-shadow: var(--card-shadow);
+    padding: 12px 16px;
+    margin-bottom: 14px;
+  }
+  .node-info .node-name { flex: 1; font-size: 13px; font-weight: 600; }
+  .node-info .battery-pill {
+    background: #d1fae5; color: #065f46;
+    padding: 4px 10px; border-radius: 12px;
+    font-size: 11px; font-weight: 600;
+  }
 
-    document.getElementById("v-moisture").textContent = d.moisture ?? "—";
+  /* ── Sensor detail (tab-sensors) ───────────────── */
+  .sensor-detail-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .sensor-detail-card {
+    background: var(--bg-white);
+    border-radius: var(--card-radius);
+    box-shadow: var(--card-shadow);
+    padding: 14px;
+  }
+  .sensor-detail-card .sd-label { font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; }
+  .sensor-detail-card .sd-value { font-size: 22px; font-weight: 700; margin: 4px 0; }
+  .sensor-detail-card .sd-sub   { font-size: 11px; color: var(--text-muted); }
+  .sensor-detail-card .sd-bar {
+    height: 4px; border-radius: 2px; background: #e5e7eb; margin-top: 6px;
+  }
+  .sensor-detail-card .sd-bar-fill { height: 100%; border-radius: 2px; }
 
-    // Soil moisture percentage
-    if (d.moisture !== null && d.moisture !== undefined) {
-      const dryValue = 4095;
-      const wetValue = 1500;
+  /* ── Pump control ──────────────────────────────── */
+  .pump-control {
+    background: var(--bg-white);
+    border-radius: var(--card-radius);
+    box-shadow: var(--card-shadow);
+    padding: 16px;
+    margin-bottom: 14px;
+  }
+  .pump-control .pump-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .pump-control .pump-mode { font-size: 13px; font-weight: 600; }
+  .pump-state-on  { background: #d1fae5; color: #065f46; }
+  .pump-state-off { background: #fee2e2; color: #991b1b; }
+  .pump-reason { font-size: 12px; color: var(--text-muted); margin-bottom: 12px; }
+  .pump-buttons { display: flex; gap: 8px; }
+  .pump-buttons button {
+    flex: 1;
+    padding: 10px 0;
+    border: none;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: .2s;
+  }
+  .btn-auto { background: var(--emerald); color: #fff; }
+  .btn-auto:hover { background: var(--emerald-dark); }
+  .btn-on { background: #d1fae5; color: #065f46; }
+  .btn-on:hover { background: #a7f3d0; }
+  .btn-off { background: #fee2e2; color: #991b1b; }
+  .btn-off:hover { background: #fecaca; }
 
-      let percentage =
-        ((dryValue - d.moisture) / (dryValue - wetValue)) * 100;
+  /* ── Field details form ────────────────────────── */
+  .field-form {
+    background: var(--bg-white);
+    border-radius: var(--card-radius);
+    box-shadow: var(--card-shadow);
+    padding: 16px;
+    margin-bottom: 14px;
+  }
+  .field-form label { display: block; font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; }
+  .field-form input, .field-form select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    font-size: 14px;
+    font-family: 'Inter', sans-serif;
+    margin-bottom: 10px;
+    background: var(--bg-page);
+  }
+  .field-form input:focus, .field-form select:focus { outline: none; border-color: var(--emerald); }
+  .btn-save {
+    width: 100%;
+    padding: 12px;
+    background: var(--emerald);
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .btn-save:hover { background: var(--emerald-dark); }
 
-      percentage = Math.max(0, Math.min(100, percentage));
+  /* ── Alert bar ─────────────────────────────────── */
+  .alert-bar {
+    border-radius: var(--card-radius);
+    padding: 12px 16px;
+    margin-bottom: 14px;
+    font-size: 13px;
+    font-weight: 500;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .alert-bar.alert-warning { background: #fef3c7; color: #92400e; border-left: 4px solid var(--warning); }
+  .alert-bar.alert-critical { background: #fee2e2; color: #991b1b; border-left: 4px solid var(--danger); }
+  .alert-bar.alert-good { background: #d1fae5; color: #065f46; border-left: 4px solid var(--good); }
 
-      document.getElementById("v-moisture-percent").textContent =
-        "Soil Moisture: " + percentage.toFixed(1) + "%";
-    } else {
-      document.getElementById("v-moisture-percent").textContent =
-        "Soil Moisture: —";
+  /* ── 3D container ──────────────────────────────── */
+  .device-3d-container {
+    background: var(--bg-white);
+    border-radius: var(--card-radius);
+    box-shadow: var(--card-shadow);
+    padding: 16px;
+    margin-bottom: 14px;
+    text-align: center;
+  }
+  #device-3d-canvas {
+    position: relative;
+    width: 100%;
+    height: 360px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #e8f5e9 0%, #f0f5f1 100%);
+    margin-bottom: 10px;
+    overflow: hidden;
+  }
+  .toggle-btn {
+    padding: 10px 20px;
+    background: var(--forest);
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .toggle-btn:hover { background: var(--forest-mid); }
+
+  /* ── Task list ─────────────────────────────────── */
+  .task-list {
+    background: var(--bg-white);
+    border-radius: var(--card-radius);
+    box-shadow: var(--card-shadow);
+    padding: 16px;
+    margin-bottom: 14px;
+  }
+  .task-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .task-header h3 { font-size: 14px; font-weight: 600; }
+  .task-progress-bar { height: 6px; background: #e5e7eb; border-radius: 3px; margin-bottom: 12px; overflow: hidden; }
+  .task-progress-fill { height: 100%; background: var(--emerald); border-radius: 3px; transition: width .3s; }
+  .task-item {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid #f3f4f6;
+  }
+  .task-item:last-child { border-bottom: none; }
+  .task-item input[type="checkbox"] {
+    width: 18px; height: 18px; accent-color: var(--emerald); margin-top: 2px; cursor: pointer;
+  }
+  .task-item .task-title { font-size: 13px; font-weight: 500; }
+  .task-item .task-desc  { font-size: 11px; color: var(--text-muted); }
+  .task-item.completed .task-title { text-decoration: line-through; color: var(--text-muted); }
+  .task-item .task-delete {
+    margin-left: auto;
+    background: none; border: none; color: var(--danger);
+    cursor: pointer; font-size: 16px;
+  }
+  .task-add-form { display: flex; gap: 8px; margin-top: 12px; }
+  .task-add-form input {
+    flex: 1; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 10px;
+    font-size: 13px; font-family: 'Inter', sans-serif; background: var(--bg-page);
+  }
+  .task-add-form input:focus { outline: none; border-color: var(--emerald); }
+  .task-add-btn {
+    padding: 10px 16px; background: var(--emerald); color: #fff;
+    border: none; border-radius: 10px; font-weight: 600; font-size: 13px; cursor: pointer;
+  }
+  .task-add-btn:hover { background: var(--emerald-dark); }
+
+  /* ── Analytics sub-tabs ────────────────────────── */
+  .sub-tabs {
+    display: flex; gap: 0; margin-bottom: 14px;
+    background: var(--bg-white);
+    border-radius: 12px;
+    box-shadow: var(--card-shadow);
+    overflow: hidden;
+  }
+  .sub-tab-btn {
+    flex: 1; padding: 10px 0; text-align: center;
+    font-size: 12px; font-weight: 600; border: none;
+    background: transparent; color: var(--text-muted); cursor: pointer;
+    transition: .2s;
+  }
+  .sub-tab-btn.active { background: var(--emerald); color: #fff; }
+  .sub-panel { display: none; }
+  .sub-panel.active { display: block; }
+
+  /* ── Crop cards ────────────────────────────────── */
+  .crop-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .crop-card {
+    background: var(--bg-white);
+    border-radius: var(--card-radius);
+    box-shadow: var(--card-shadow);
+    padding: 14px;
+    text-align: center;
+  }
+  .crop-card .crop-emoji { font-size: 32px; margin-bottom: 6px; }
+  .crop-card .crop-name  { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+  .crop-card .match-bar  { height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden; }
+  .crop-card .match-fill { height: 100%; border-radius: 3px; background: var(--emerald); }
+  .crop-card .match-pct  { font-size: 12px; font-weight: 600; color: var(--emerald-dark); margin-top: 4px; }
+
+  /* ── Chart containers ──────────────────────────── */
+  .chart-wrap {
+    background: var(--bg-white);
+    border-radius: var(--card-radius);
+    box-shadow: var(--card-shadow);
+    padding: 16px;
+    margin-bottom: 14px;
+  }
+  .chart-wrap h4 { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+  .chart-wrap canvas { width: 100% !important; height: 200px !important; }
+
+  /* ── History table ─────────────────────────────── */
+  .history-table-wrap {
+    overflow-x: auto;
+    background: var(--bg-white);
+    border-radius: var(--card-radius);
+    box-shadow: var(--card-shadow);
+    margin-bottom: 14px;
+  }
+  .history-table {
+    width: 100%; border-collapse: collapse;
+    font-size: 11px;
+  }
+  .history-table th {
+    background: var(--forest);
+    color: #fff;
+    padding: 10px 8px;
+    text-align: left;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .history-table td { padding: 8px; border-bottom: 1px solid #f3f4f6; white-space: nowrap; }
+  .history-table tr:hover { background: #f0fdf4; }
+
+  .btn-pdf {
+    display: block; width: 100%; padding: 12px;
+    background: var(--forest); color: #fff; border: none;
+    border-radius: 10px; font-size: 14px; font-weight: 600;
+    cursor: pointer; margin-bottom: 14px; text-align: center;
+  }
+  .btn-pdf:hover { background: var(--forest-mid); }
+
+  /* ── AI Panel ──────────────────────────────────── */
+  .ai-panel {
+    background: var(--bg-white);
+    border-radius: var(--card-radius);
+    box-shadow: var(--card-shadow);
+    padding: 16px;
+    margin-bottom: 14px;
+  }
+  .ai-panel h3 { font-size: 14px; font-weight: 700; margin-bottom: 10px; color: var(--forest); }
+  #chat-log {
+    max-height: 220px; overflow-y: auto;
+    margin-bottom: 10px;
+    padding: 10px;
+    background: var(--bg-page);
+    border-radius: 10px;
+    font-size: 13px;
+  }
+  #chat-log .msg { margin-bottom: 8px; line-height: 1.5; }
+  #chat-log .msg.user { color: var(--forest); font-weight: 600; }
+  #chat-log .msg.ai   { color: var(--text-dark); }
+  .ai-input-row { display: flex; gap: 8px; margin-bottom: 10px; }
+  .ai-input-row input {
+    flex: 1; padding: 10px 12px; border: 1px solid #d1d5db;
+    border-radius: 10px; font-size: 13px; font-family: 'Inter', sans-serif;
+    background: var(--bg-page);
+  }
+  .ai-input-row input:focus { outline: none; border-color: var(--emerald); }
+  .btn-ai {
+    padding: 10px 16px; background: var(--emerald); color: #fff;
+    border: none; border-radius: 10px; font-weight: 600; font-size: 13px; cursor: pointer;
+  }
+  .btn-ai:hover { background: var(--emerald-dark); }
+  .btn-reco {
+    width: 100%; padding: 10px; background: var(--forest); color: #fff;
+    border: none; border-radius: 10px; font-weight: 600; font-size: 13px; cursor: pointer;
+  }
+  .btn-reco:hover { background: var(--forest-mid); }
+  #reco-result {
+    margin-top: 10px; padding: 10px; background: var(--bg-page);
+    border-radius: 10px; font-size: 13px; color: var(--text-dark);
+    display: none;
+  }
+
+  /* ── Settings ──────────────────────────────────── */
+  .settings-card {
+    background: var(--bg-white);
+    border-radius: var(--card-radius);
+    box-shadow: var(--card-shadow);
+    padding: 20px;
+    margin-bottom: 14px;
+  }
+  .settings-card h3 { font-size: 14px; font-weight: 700; margin-bottom: 12px; color: var(--forest); }
+  .settings-card p  { font-size: 13px; color: var(--text-muted); margin-bottom: 8px; }
+  .btn-logout {
+    display: block; width: 100%; padding: 12px;
+    background: var(--danger); color: #fff;
+    border: none; border-radius: 10px; font-size: 14px;
+    font-weight: 600; cursor: pointer; text-align: center; text-decoration: none;
+  }
+  .btn-logout:hover { background: #dc2626; }
+
+  /* ── Section headers ───────────────────────────── */
+  .section-title {
+    font-size: 15px; font-weight: 700; color: var(--forest);
+    margin-bottom: 10px; margin-top: 6px;
+  }
+
+  /* ── Responsive ────────────────────────────────── */
+  @media (min-width: 640px) {
+    .tab-panel { max-width: 600px; }
+    .sensor-grid { grid-template-columns: 1fr 1fr 1fr; }
+    .sensor-detail-grid { grid-template-columns: 1fr 1fr 1fr; }
+    .crop-grid { grid-template-columns: 1fr 1fr 1fr; }
+  }
+  @media (min-width: 1024px) {
+    .tab-panel { max-width: 900px; padding: 24px; }
+    .sensor-grid { grid-template-columns: repeat(3, 1fr); }
+    .sensor-detail-grid { grid-template-columns: repeat(4, 1fr); }
+    .crop-grid { grid-template-columns: repeat(4, 1fr); }
+    #device-3d-canvas { height: 380px; }
+  }
+</style>
+
+{# ══════════════════════════════════════════════════════════════════
+   TAB 1 — HOME
+   ══════════════════════════════════════════════════════════════════ #}
+<div id="tab-home" class="tab-panel active">
+
+  {# ── Weather ──────────────────────────────────── #}
+  <div class="weather-section">
+    <div class="weather-icon">
+      {% if weather and weather.available %}
+        {% if 'cloud' in weather.description|lower %}☁️
+        {% elif 'rain' in weather.description|lower %}🌧️
+        {% elif 'clear' in weather.description|lower or 'sun' in weather.description|lower %}☀️
+        {% else %}🌤️
+        {% endif %}
+      {% else %}🌤️{% endif %}
+    </div>
+    <div class="weather-info">
+      <h3>📍 {{ weather.city if weather and weather.city else 'Jaipur, Rajasthan' }}</h3>
+      <p>
+        {% if weather and weather.available %}
+          {{ weather.description }} · Humidity {{ weather.humidity }}% · Rain {{ weather.rain_probability }}%
+        {% else %}
+          Weather unavailable
+        {% endif %}
+      </p>
+    </div>
+    <div class="weather-temp">
+      {% if weather and weather.available %}{{ weather.temp }}°C{% else %}—{% endif %}
+    </div>
+  </div>
+
+  {# ── Plant Health Card ────────────────────────── #}
+  <div class="health-card">
+    <div class="health-ring-wrap">
+      <svg width="90" height="90" viewBox="0 0 90 90">
+        <circle cx="45" cy="45" r="38" fill="none" stroke="rgba(255,255,255,0.25)" stroke-width="8"/>
+        <circle id="health-ring" cx="45" cy="45" r="38" fill="none" stroke="#fff" stroke-width="8"
+                stroke-dasharray="238.76" stroke-dashoffset="238.76"
+                stroke-linecap="round" transform="rotate(-90 45 45)"
+                style="transition: stroke-dashoffset .8s ease;"/>
+      </svg>
+      <span class="ring-text" id="health-score-value">—</span>
+    </div>
+    <div>
+      <div class="health-label">🌱 Plant Health</div>
+      <div class="health-value" id="health-score-display">—%</div>
+      <div class="health-status" id="health-score-label">Loading…</div>
+    </div>
+  </div>
+
+  {# ── Quick Sensor Summary ─────────────────────── #}
+  <h3 class="section-title">Sensor Overview</h3>
+  <div class="sensor-grid">
+
+    <div class="sensor-card">
+      <div class="sensor-icon">💧</div>
+      <div class="sensor-label">Moisture</div>
+      <div class="sensor-value" id="v-moisture">
+        {% if latest and latest.moisture is not none %}
+          {% set m_pct = ((4095 - latest.moisture|float) / (4095 - 1500) * 100) %}
+          {{ ([0, [100, m_pct]|min]|max)|round(1) }}%
+        {% else %}—{% endif %}
+      </div>
+      <span class="badge" id="b-moisture">—</span>
+    </div>
+
+    <div class="sensor-card">
+      <div class="sensor-icon">🧪</div>
+      <div class="sensor-label">pH Level</div>
+      <div class="sensor-value" id="v-ph">{{ latest.ph|round(1) if latest and latest.ph is not none else '—' }}</div>
+      <span class="badge" id="b-ph">—</span>
+    </div>
+
+    <div class="sensor-card">
+      <div class="sensor-icon">🧬</div>
+      <div class="sensor-label">NPK</div>
+      <div class="sensor-value" id="v-npk">
+        {% if latest and latest.npk_n is not none %}
+          N{{ latest.npk_n }} P{{ latest.npk_p }} K{{ latest.npk_k }}
+        {% else %}—{% endif %}
+      </div>
+      <span class="badge" id="b-npk">—</span>
+    </div>
+
+    <div class="sensor-card">
+      <div class="sensor-icon">🌡️</div>
+      <div class="sensor-label">Soil Temp</div>
+      <div class="sensor-value" id="v-soil_temp">{{ (latest.soil_temp ~ '°C') if latest and latest.soil_temp is not none else '—' }}</div>
+      <span class="badge" id="b-soil_temp">—</span>
+    </div>
+
+    <div class="sensor-card">
+      <div class="sensor-icon">🌧️</div>
+      <div class="sensor-label">Rain</div>
+      <div class="sensor-value" id="v-rain">{{ ('Detected' if latest.rain_detected else 'None') if latest else '—' }}</div>
+      <span class="badge" id="b-rain">—</span>
+    </div>
+
+    <div class="sensor-card">
+      <div class="sensor-icon">⚡</div>
+      <div class="sensor-label">EC</div>
+      <div class="sensor-value" id="v-ec">{{ latest.ec if latest and latest.ec is not none else '—' }}</div>
+      <span class="badge" id="b-ec">—</span>
+    </div>
+
+  </div>
+
+  {# ── Node Info ────────────────────────────────── #}
+  <div class="node-info">
+    <span>🛰️</span>
+    <span class="node-name">Sensor Node-01</span>
+    <span>🔋☀️</span>
+    <span class="battery-pill">100 %</span>
+  </div>
+
+</div>{# /tab-home #}
+
+
+{# ══════════════════════════════════════════════════════════════════
+   TAB 2 — SENSORS
+   ══════════════════════════════════════════════════════════════════ #}
+<div id="tab-sensors" class="tab-panel">
+
+  <h3 class="section-title">Sensor Details</h3>
+
+  <div class="sensor-detail-grid">
+    {# Moisture #}
+    <div class="sensor-detail-card">
+      <div class="sd-label">💧 Moisture</div>
+      <div class="sd-value" id="sd-moisture">—</div>
+      <div class="sd-sub" id="sd-moisture-raw">Raw: —</div>
+      <div class="sd-bar"><div class="sd-bar-fill" id="sd-moisture-bar" style="width:0%;background:var(--emerald);"></div></div>
+    </div>
+
+    {# Soil Temp #}
+    <div class="sensor-detail-card">
+      <div class="sd-label">🌡️ Soil Temp</div>
+      <div class="sd-value" id="sd-soil_temp">—</div>
+      <div class="sd-sub">°C</div>
+      <div class="sd-bar"><div class="sd-bar-fill" id="sd-soil_temp-bar" style="width:0%;background:var(--warning);"></div></div>
+    </div>
+
+    {# pH #}
+    <div class="sensor-detail-card">
+      <div class="sd-label">🧪 pH</div>
+      <div class="sd-value" id="sd-ph">—</div>
+      <div class="sd-sub">Acidity</div>
+      <div class="sd-bar"><div class="sd-bar-fill" id="sd-ph-bar" style="width:0%;background:var(--lime);"></div></div>
+    </div>
+
+    {# Nitrogen #}
+    <div class="sensor-detail-card">
+      <div class="sd-label">🟢 Nitrogen</div>
+      <div class="sd-value" id="sd-nitrogen">—</div>
+      <div class="sd-sub">mg/kg</div>
+      <div class="sd-bar"><div class="sd-bar-fill" id="sd-nitrogen-bar" style="width:0%;background:var(--good);"></div></div>
+    </div>
+
+    {# Phosphorus #}
+    <div class="sensor-detail-card">
+      <div class="sd-label">🔵 Phosphorus</div>
+      <div class="sd-value" id="sd-phosphorus">—</div>
+      <div class="sd-sub">mg/kg</div>
+      <div class="sd-bar"><div class="sd-bar-fill" id="sd-phosphorus-bar" style="width:0%;background:#3b82f6;"></div></div>
+    </div>
+
+    {# Potassium #}
+    <div class="sensor-detail-card">
+      <div class="sd-label">🟠 Potassium</div>
+      <div class="sd-value" id="sd-potassium">—</div>
+      <div class="sd-sub">mg/kg</div>
+      <div class="sd-bar"><div class="sd-bar-fill" id="sd-potassium-bar" style="width:0%;background:#f97316;"></div></div>
+    </div>
+
+    {# Air Temp + Humidity #}
+    <div class="sensor-detail-card">
+      <div class="sd-label">🌬️ Air Temp / Humidity</div>
+      <div class="sd-value" id="sd-air_temp">—</div>
+      <div class="sd-sub" id="sd-humidity">Humidity: —%</div>
+      <div class="sd-bar"><div class="sd-bar-fill" id="sd-humidity-bar" style="width:0%;background:#06b6d4;"></div></div>
+    </div>
+
+    {# Rain #}
+    <div class="sensor-detail-card">
+      <div class="sd-label">🌧️ Rain</div>
+      <div class="sd-value" id="sd-rain">—</div>
+      <div class="sd-sub" id="sd-rain-status">—</div>
+      <div class="sd-bar"><div class="sd-bar-fill" id="sd-rain-bar" style="width:0%;background:#6366f1;"></div></div>
+    </div>
+
+    {# EC #}
+    <div class="sensor-detail-card">
+      <div class="sd-label">⚡ EC</div>
+      <div class="sd-value" id="sd-ec">—</div>
+      <div class="sd-sub">µS/cm</div>
+      <div class="sd-bar"><div class="sd-bar-fill" id="sd-ec-bar" style="width:0%;background:var(--warning);"></div></div>
+    </div>
+  </div>
+
+  {# ── Pump Control ─────────────────────────────── #}
+  <div class="pump-control">
+    <div class="pump-header">
+      <span class="pump-mode">Mode: <strong id="mode-label">{{ control.mode if control else 'AUTO' }}</strong></span>
+      {% set p_on = (control.manual_state == 'ON') if (control and control.mode == 'MANUAL') else (latest and latest.pump_decision == 'ON') %}
+      <span class="badge {{ 'pump-state-on' if p_on else 'pump-state-off' }}" id="pump-state">{{ 'ON' if p_on else 'OFF' }}</span>
+    </div>
+    <div class="pump-reason" id="pump-reason">{{ pump_reason if pump_reason else (latest.pump_reason if latest else 'Waiting for sensor data…') }}</div>
+    <div class="pump-buttons">
+      <button class="btn-auto" onclick="setControl('auto')">🤖 Auto</button>
+      <button class="btn-on"   onclick="setControl('manual_on')">💧 ON</button>
+      <button class="btn-off"  onclick="setControl('manual_off')">🛑 OFF</button>
+    </div>
+  </div>
+
+  {# ── Field Details Form ────────────────────────── #}
+  <div class="field-form">
+    <h3 class="section-title">Field Details</h3>
+    <form method="POST" action="{{ url_for('save_farm_profile') }}">
+      <label for="field-area">Farm Area</label>
+      <input type="number" id="field-area" name="area_value" step="0.1" placeholder="e.g. 1.0"
+             value="{{ profile.area_value if profile and profile.area_value is not none else 1.0 }}">
+
+      <label for="field-unit">Unit</label>
+      <select id="field-unit" name="area_unit">
+        <option value="acre" {{ 'selected' if profile and profile.area_unit == 'acre' else '' }}>Acre</option>
+        <option value="hectare" {{ 'selected' if profile and profile.area_unit == 'hectare' else '' }}>Hectare</option>
+      </select>
+
+      <label for="field-crop">Crop Name</label>
+      <input type="text" id="field-crop" name="crop_name" placeholder="e.g. Tomato"
+             value="{{ profile.crop_name if profile and profile.crop_name else '' }}">
+
+      <button type="submit" class="btn-save">💾 Save Profile</button>
+    </form>
+  </div>
+
+</div>{# /tab-sensors #}
+
+
+{# ══════════════════════════════════════════════════════════════════
+   TAB 3 — DEVICE
+   ══════════════════════════════════════════════════════════════════ #}
+<div id="tab-device" class="tab-panel">
+
+  {# ── Smart Alert Bar ──────────────────────────── #}
+  <div id="alert-container">
+    <div class="alert-bar alert-good">✅ All systems normal</div>
+  </div>
+
+  {# ── 3D Device View ───────────────────────────── #}
+  <div class="device-3d-container">
+    <h3 class="section-title">Device 3D View</h3>
+    <div id="device-3d-canvas"></div>
+    <button class="toggle-btn" id="exploded-toggle-btn" onclick="toggleExplodedView()">💥 Exploded View</button>
+  </div>
+
+  {# ── Task Checklist ───────────────────────────── #}
+  <div class="task-list">
+    <div class="task-header">
+      <h3>📋 Tasks (<span id="task-count">0/0</span> Completed)</h3>
+    </div>
+    <div class="task-progress-bar">
+      <div class="task-progress-fill" id="task-progress" style="width:0%;"></div>
+    </div>
+    <div id="task-container">
+      <p style="font-size:13px;color:var(--text-muted);">Loading tasks…</p>
+    </div>
+    <div class="task-add-form">
+      <input type="text" id="new-task-title" placeholder="New task title…">
+      <button class="task-add-btn" onclick="addTask()">+ Add</button>
+    </div>
+  </div>
+
+</div>{# /tab-device #}
+
+
+{# ══════════════════════════════════════════════════════════════════
+   TAB 4 — ANALYTICS
+   ══════════════════════════════════════════════════════════════════ #}
+<div id="tab-analytics" class="tab-panel">
+
+  {# Sub-tab buttons #}
+  <div class="sub-tabs">
+    <button class="sub-tab-btn active" onclick="switchSubTab('details', this)">Details</button>
+    <button class="sub-tab-btn"        onclick="switchSubTab('soil', this)">Soil</button>
+    <button class="sub-tab-btn"        onclick="switchSubTab('tasks', this)">Tasks</button>
+    <button class="sub-tab-btn"        onclick="switchSubTab('history', this)">History</button>
+  </div>
+
+  {# ── Details sub-tab ──────────────────────────── #}
+  <div id="sub-details" class="sub-panel active">
+
+    {# Soil health overview #}
+    <div class="card">
+      <div class="card-title">🌱 Overall Soil Health</div>
+      <div style="display:flex;align-items:center;gap:16px;">
+        <div>
+          <div style="font-size:36px;font-weight:700;color:var(--emerald);" id="analytics-health-score">—</div>
+          <div style="font-size:12px;color:var(--text-muted);">out of 100</div>
+        </div>
+        <div style="flex:1;">
+          <canvas id="health-trend-chart" height="80"></canvas>
+        </div>
+      </div>
+    </div>
+
+    {# Crop recommendations #}
+    <h3 class="section-title">🌾 Crop Recommendations</h3>
+    <div class="crop-grid" id="crop-container">
+      <p style="font-size:13px;color:var(--text-muted);grid-column:1/-1;">Loading…</p>
+    </div>
+
+  </div>
+
+  {# ── Soil sub-tab ─────────────────────────────── #}
+  <div id="sub-soil" class="sub-panel">
+    <div class="chart-wrap">
+      <h4>💧 Moisture Trend</h4>
+      <canvas id="moisture-chart"></canvas>
+    </div>
+    <div class="chart-wrap">
+      <h4>🧪 pH Trend</h4>
+      <canvas id="ph-chart"></canvas>
+    </div>
+    <div class="chart-wrap">
+      <h4>🌡️ Temperature Trend</h4>
+      <canvas id="temp-chart"></canvas>
+    </div>
+  </div>
+
+  {# ── Tasks sub-tab ────────────────────────────── #}
+  <div id="sub-tasks" class="sub-panel">
+    <div class="card">
+      <div class="card-title">📊 Task Completion Stats</div>
+      <div style="text-align:center;padding:20px 0;">
+        <div style="font-size:48px;font-weight:700;color:var(--emerald);" id="tasks-completed-pct">0%</div>
+        <div style="font-size:13px;color:var(--text-muted);" id="tasks-completed-text">0 of 0 tasks completed</div>
+      </div>
+      <div class="task-progress-bar" style="height:10px;">
+        <div class="task-progress-fill" id="task-analytics-progress" style="width:0%;"></div>
+      </div>
+    </div>
+  </div>
+
+  {# ── History sub-tab ──────────────────────────── #}
+  <div id="sub-history" class="sub-panel">
+    <button class="btn-pdf" id="download-pdf-btn" onclick="downloadPDF()">📄 Download Soil Report (PDF)</button>
+    <div class="history-table-wrap">
+      <table class="history-table" id="history-table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Moisture</th>
+            <th>pH</th>
+            <th>Soil °C</th>
+            <th>EC</th>
+            <th>N</th>
+            <th>P</th>
+            <th>K</th>
+          </tr>
+        </thead>
+        <tbody id="history-tbody">
+          <tr><td colspan="8" style="text-align:center;color:var(--text-muted);">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {# ── AI Farm Advisor (always visible) ──────────── #}
+  <div class="ai-panel">
+    <h3>🤖 AI Farm Advisor</h3>
+    <div id="chat-log">
+      {% if chat_history %}
+        {% for m in chat_history %}
+          <div class="msg {{ 'user' if m.role == 'user' else 'ai' }}">
+            <strong>{{ '🧑‍🌾 You' if m.role == 'user' else '🤖 AI' }}:</strong> {{ m.content }}
+          </div>
+        {% endfor %}
+      {% else %}
+        <div class="msg ai"><strong>🤖 AI:</strong> Hello! Ask me anything about your farm.</div>
+      {% endif %}
+    </div>
+    <div class="ai-input-row">
+      <input type="text" id="chat-question" placeholder="Ask about your soil, crops…" onkeydown="if(event.key==='Enter')askAI()">
+      <button class="btn-ai" onclick="askAI()">Send</button>
+    </div>
+    <button class="btn-reco" onclick="getRecommendation()">🌾 Get Fertilizer &amp; Crop Recommendation</button>
+    <div id="reco-result"></div>
+  </div>
+
+</div>{# /tab-analytics #}
+
+
+{# ══════════════════════════════════════════════════════════════════
+   TAB 5 — SETTINGS
+   ══════════════════════════════════════════════════════════════════ #}
+<div id="tab-settings" class="tab-panel">
+
+  <div class="settings-card">
+    <h3>👤 Account</h3>
+    {% if current_user.is_authenticated %}
+      <p><strong>Email:</strong> {{ current_user.email }}</p>
+    {% else %}
+      <p>Not logged in.</p>
+    {% endif %}
+  </div>
+
+  <div class="settings-card">
+    <h3>ℹ️ About AgriSense AI</h3>
+    <p><strong>Version:</strong> 2.0.0</p>
+    <p>Smart farming dashboard powered by IoT sensors, real-time analytics, and AI-driven recommendations.</p>
+    <p style="margin-top:4px;">Built with Flask · Three.js · Chart.js</p>
+  </div>
+
+  {% if current_user.is_authenticated %}
+    <a href="{{ url_for('logout') }}" class="btn-logout">🚪 Logout</a>
+  {% endif %}
+
+</div>{# /tab-settings #}
+
+{% endblock %}
+
+
+{# ══════════════════════════════════════════════════════════════════
+   SCRIPTS
+   ══════════════════════════════════════════════════════════════════ #}
+{% block scripts %}
+
+{# CDN Libraries #}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+{% raw %}
+/**
+ * Smart Soil Monitoring Device - Interactive 3D Model (Three.js Global Build)
+ *
+ * Required CDN script tags (include in your HTML before this script):
+ * <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+ * <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+ *
+ * Usage:
+ *   initDevice3D('device-3d-canvas');
+ */
+
+(function (global) {
+  'use strict';
+
+  /**
+   * Creates a centered rounded box geometry along X, Y, Z using ExtrudeGeometry.
+   */
+  function createRoundedBoxGeometry(width, height, depth, radius) {
+    var bevelSize = Math.min(radius, width * 0.2, depth * 0.2);
+    var bevelThickness = Math.min(radius, height * 0.25);
+    var innerW = Math.max(1, width - 2 * bevelSize);
+    var innerD = Math.max(1, depth - 2 * bevelSize);
+    var extrudeDepth = Math.max(1, height - 2 * bevelThickness);
+    var r = Math.max(0.5, radius - bevelSize);
+
+    var shape = new THREE.Shape();
+    var hw = innerW / 2;
+    var hd = innerD / 2;
+
+    shape.moveTo(-hw + r, -hd);
+    shape.lineTo(hw - r, -hd);
+    shape.quadraticCurveTo(hw, -hd, hw, -hd + r);
+    shape.lineTo(hw, hd - r);
+    shape.quadraticCurveTo(hw, hd, hw - r, hd);
+    shape.lineTo(-hw + r, hd);
+    shape.quadraticCurveTo(-hw, hd, -hw, hd - r);
+    shape.lineTo(-hw, -hd + r);
+    shape.quadraticCurveTo(-hw, -hd, -hw + r, -hd);
+
+    var geometry = new THREE.ExtrudeGeometry(shape, {
+      depth: extrudeDepth,
+      bevelEnabled: true,
+      bevelThickness: bevelThickness,
+      bevelSize: bevelSize,
+      bevelSegments: 4,
+      curveSegments: 8
+    });
+
+    geometry.center();
+    geometry.rotateX(-Math.PI / 2);
+    return geometry;
+  }
+
+  /**
+   * Generates a procedural photovoltaic grid texture for the Solar Panel.
+   */
+  function createSolarPanelTexture() {
+    var canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 384;
+    var ctx = canvas.getContext('2d');
+
+    // Deep photovoltaic dark blue/black gradient
+    var grad = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+    grad.addColorStop(0, '#091529');
+    grad.addColorStop(0.5, '#0f2547');
+    grad.addColorStop(1, '#081224');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    var cols = 6;
+    var rows = 4;
+    var pad = 12;
+    var cellW = (canvas.width - pad * 2) / cols;
+    var cellH = (canvas.height - pad * 2) / rows;
+
+    // Individual silicon cells with subtle sheen
+    for (var r = 0; r < rows; r++) {
+      for (var c = 0; c < cols; c++) {
+        var x = pad + c * cellW;
+        var y = pad + r * cellH;
+        ctx.fillStyle = (r + c) % 2 === 0 ? 'rgba(20, 48, 92, 0.45)' : 'rgba(14, 38, 76, 0.45)';
+        ctx.fillRect(x + 2, y + 2, cellW - 4, cellH - 4);
+
+        // Fine vertical busbars inside each cell
+        ctx.strokeStyle = 'rgba(148, 197, 255, 0.25)';
+        ctx.lineWidth = 1;
+        for (var b = 1; b <= 3; b++) {
+          var bx = x + (cellW / 4) * b;
+          ctx.beginPath();
+          ctx.moveTo(bx, y + 3);
+          ctx.lineTo(bx, y + cellH - 3);
+          ctx.stroke();
+        }
+      }
     }
 
-    document.getElementById("v-soil_temp").textContent = (d.soil_temp ?? "—") + " °C"; 
-    document.getElementById("v-ph").textContent = d.ph ?? "—"; 
-    document.getElementById("v-npk").textContent = `${d.npk_n ?? "—"} / ${d.npk_p ?? "—"} / ${d.npk_k ?? "—"}`; 
-    document.getElementById("v-dht").textContent = `${d.air_temp ?? "—"} °C, ${d.humidity ?? "—"}%`; 
-    document.getElementById("v-rain").textContent = d.rain_detected ? "Detected" : "None"; 
-    document.getElementById("v-ec").textContent = d.ec ?? "—"; 
+    // Crisp silver grid lines between cells
+    ctx.strokeStyle = '#93c5fd';
+    ctx.lineWidth = 2.5;
+    for (var cIdx = 0; cIdx <= cols; cIdx++) {
+      var gx = pad + cIdx * cellW;
+      ctx.beginPath();
+      ctx.moveTo(gx, pad);
+      ctx.lineTo(gx, canvas.height - pad);
+      ctx.stroke();
+    }
+    for (var rIdx = 0; rIdx <= rows; rIdx++) {
+      var gy = pad + rIdx * cellH;
+      ctx.beginPath();
+      ctx.moveTo(pad, gy);
+      ctx.lineTo(canvas.width - pad, gy);
+      ctx.stroke();
+    }
 
-    document.getElementById("pump-state").textContent = d.pump_decision; 
-    document.getElementById("pump-reason").textContent = d.pump_reason; 
-    const banner = document.getElementById("pump-banner"); 
-    banner.className = "pump-banner " + (d.pump_decision === "ON" ? "on" : "off"); 
-  } catch (e) { 
-    console.error("refresh failed", e); 
-  } 
-} 
-async function getRecommendation() { 
-  const box = document.getElementById("reco-result"); 
-  box.textContent = "Loading..."; 
-  try { 
-    const res = await fetch("{{ url_for('api_recommendation') }}"); 
-    const d = await res.json(); 
-    if (d.error) { box.textContent = d.error; return; } 
+    // Outer frame border
+    ctx.strokeStyle = '#475569';
+    ctx.lineWidth = 10;
+    ctx.strokeRect(5, 5, canvas.width - 10, canvas.height - 10);
 
-    const f = d.fertilizer; 
-    box.innerHTML = ` 
-      <p><strong>Field size used:</strong> ${f.area_acres} acre</p> 
-      <p><strong>Fertilizer needed:</strong> Urea ${f.urea_kg} kg, DAP ${f.dap_kg} kg, MOP ${f.mop_kg} kg</p> 
-      <p><strong>N/P/K level:</strong> ${f.n_level} / ${f.p_level} / ${f.k_level}</p> 
-      <p><strong>Suggested crops:</strong> ${d.crops.join(", ")}</p> 
-      <p class="disclaimer">Approximate estimate for guidance — confirm with local agriculture office before applying.</p> 
-    `; 
-  } catch (e) { 
-    box.textContent = "Could not fetch recommendation."; 
-  } 
-} 
+    var texture = new THREE.CanvasTexture(canvas);
+    texture.anisotropy = 4;
+    return texture;
+  }
 
-async function askAI() { 
-  const input = document.getElementById("chat-question"); 
-  const question = input.value.trim(); 
-  if (!question) return; 
+  /**
+   * Generates a procedural PCB trace texture for the ESP32 mainboard.
+   */
+  function createPCBTexture() {
+    var canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 192;
+    var ctx = canvas.getContext('2d');
 
-  const log = document.getElementById("chat-log"); 
-  log.innerHTML += `<div class="chat-msg user"><strong>You:</strong> ${question}</div>`; 
-  input.value = ""; 
-  log.scrollTop = log.scrollHeight; 
+    ctx.fillStyle = '#15803d';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  const res = await fetch("{{ url_for('api_ask_ai') }}", { 
-    method: "POST", 
-    headers: { "Content-Type": "application/json" }, 
-    body: JSON.stringify({ question }) 
-  }); 
-  const d = await res.json(); 
-  log.innerHTML += `<div class="chat-msg ai"><strong>AI:</strong> ${d.answer || d.error}</div>`; 
-  log.scrollTop = log.scrollHeight; 
-} 
+    // Subtle copper traces under solder mask
+    ctx.strokeStyle = '#22c55e';
+    ctx.lineWidth = 2;
+    for (var i = 0; i < 12; i++) {
+      var y = 20 + i * 13;
+      ctx.beginPath();
+      ctx.moveTo(16, y);
+      ctx.lineTo(90 + (i % 3) * 20, y);
+      ctx.lineTo(110 + (i % 3) * 20, y + 8);
+      ctx.lineTo(236, y + 8);
+      ctx.stroke();
+    }
 
-setInterval(refresh, 10000); 
-</script> 
+    // Gold corner mounting pads
+    var pads = [
+      [14, 14],
+      [canvas.width - 14, 14],
+      [14, canvas.height - 14],
+      [canvas.width - 14, canvas.height - 14]
+    ];
+    pads.forEach(function (p) {
+      ctx.fillStyle = '#eab308';
+      ctx.beginPath();
+      ctx.arc(p[0], p[1], 7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#0f172a';
+      ctx.beginPath();
+      ctx.arc(p[0], p[1], 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    var texture = new THREE.CanvasTexture(canvas);
+    texture.anisotropy = 4;
+    return texture;
+  }
+
+  /**
+   * Creates a glowing clickable hotspot sphere with an outer pulse halo.
+   */
+  function createHotspot(info) {
+    var group = new THREE.Group();
+
+    var coreGeom = new THREE.SphereGeometry(2.1, 18, 18);
+    var coreMat = new THREE.MeshStandardMaterial({
+      color: 0x10b981,
+      emissive: 0x00e676,
+      emissiveIntensity: 1.15,
+      roughness: 0.2,
+      metalness: 0.1
+    });
+    var coreMesh = new THREE.Mesh(coreGeom, coreMat);
+    coreMesh.userData.hotspotInfo = info;
+    group.add(coreMesh);
+
+    var haloGeom = new THREE.SphereGeometry(3.6, 18, 18);
+    var haloMat = new THREE.MeshBasicMaterial({
+      color: 0x34d399,
+      transparent: true,
+      opacity: 0.35,
+      depthWrite: false
+    });
+    var haloMesh = new THREE.Mesh(haloGeom, haloMat);
+    group.add(haloMesh);
+
+    group.userData.coreMesh = coreMesh;
+    group.userData.haloMesh = haloMesh;
+    group.userData.basePhase = Math.random() * Math.PI * 2;
+    return group;
+  }
+
+  /**
+   * Initializes the interactive 3D Smart Soil Monitoring Device inside containerId.
+   */
+  function initDevice3D(containerId) {
+    var container = document.getElementById(containerId);
+    if (!container) {
+      console.error('initDevice3D: Container element "' + containerId + '" not found.');
+      return null;
+    }
+
+    // Ensure container can host positioned UI overlays
+    var computedPos = global.getComputedStyle(container).position;
+    if (computedPos === 'static') {
+      container.style.position = 'relative';
+    }
+    container.style.overflow = 'hidden';
+
+    var width = container.clientWidth || 800;
+    var height = container.clientHeight || 600;
+
+    // 1. Scene, Camera, Renderer
+    var scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xf0f5f1);
+    scene.fog = new THREE.Fog(0xf0f5f1, 320, 680);
+
+    var camera = new THREE.PerspectiveCamera(42, width / height, 0.5, 1000);
+    camera.position.set(135, 85, 175);
+
+    var renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    renderer.setSize(width, height);
+    renderer.setPixelRatio(Math.min(global.devicePixelRatio || 1, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    container.appendChild(renderer.domElement);
+
+    // 2. OrbitControls (global THREE.OrbitControls)
+    var controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.minDistance = 80;
+    controls.maxDistance = 360;
+    controls.maxPolarAngle = Math.PI * 0.52;
+    controls.target.set(0, -14, 0);
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = 0.85;
+
+    var idleTimer = null;
+    controls.addEventListener('start', function () {
+      controls.autoRotate = false;
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
+      }
+    });
+    controls.addEventListener('end', function () {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(function () {
+        controls.autoRotate = true;
+      }, 2500);
+    });
+
+    // 3. Lighting (soft ambient + hemisphere + shadow-casting directional light)
+    var ambientLight = new THREE.AmbientLight(0xffffff, 0.62);
+    scene.add(ambientLight);
+
+    var hemiLight = new THREE.HemisphereLight(0xf8fff9, 0xcbd5ce, 0.35);
+    hemiLight.position.set(0, 160, 0);
+    scene.add(hemiLight);
+
+    var dirLight = new THREE.DirectionalLight(0xffffff, 0.95);
+    dirLight.position.set(95, 175, 115);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.width = 2048;
+    dirLight.shadow.mapSize.height = 2048;
+    dirLight.shadow.camera.near = 20;
+    dirLight.shadow.camera.far = 450;
+    var d = 130;
+    dirLight.shadow.camera.left = -d;
+    dirLight.shadow.camera.right = d;
+    dirLight.shadow.camera.top = d;
+    dirLight.shadow.camera.bottom = -d;
+    dirLight.shadow.bias = -0.0005;
+    scene.add(dirLight);
+
+    // 4. Ground Plane with Soft Shadow
+    var groundGeom = new THREE.PlaneGeometry(420, 420);
+    var groundMat = new THREE.ShadowMaterial({ opacity: 0.17 });
+    var groundMesh = new THREE.Mesh(groundGeom, groundMat);
+    groundMesh.rotation.x = -Math.PI / 2;
+    groundMesh.position.y = -96;
+    groundMesh.receiveShadow = true;
+    scene.add(groundMesh);
+
+    // Root device group
+    var deviceGroup = new THREE.Group();
+    scene.add(deviceGroup);
+
+    var animParts = [];
+    var hotspotGroups = [];
+    var hotspotTargets = [];
+
+    function registerPart(group, assembledY, explodedY, assembledX, explodedX) {
+      group.position.y = assembledY;
+      if (typeof assembledX === 'number') {
+        group.position.x = assembledX;
+      }
+      animParts.push({
+        group: group,
+        assembledY: assembledY,
+        explodedY: explodedY,
+        assembledX: typeof assembledX === 'number' ? assembledX : group.position.x,
+        explodedX: typeof explodedX === 'number' ? explodedX : group.position.x
+      });
+    }
+
+    function addHotspotTo(parentGroup, position, info) {
+      var hs = createHotspot(info);
+      hs.position.copy(position);
+      parentGroup.add(hs);
+      hotspotGroups.push(hs);
+      hotspotTargets.push(hs.userData.coreMesh);
+    }
+
+    // ---------------------------------------------------------
+    // Component 1: Solar Panel (80 x 5 x 60, tilted ~10 deg)
+    // ---------------------------------------------------------
+    var solarGroup = new THREE.Group();
+    var solarTexture = createSolarPanelTexture();
+    var frameMat = new THREE.MeshStandardMaterial({
+      color: 0x1e293b,
+      roughness: 0.4,
+      metalness: 0.6
+    });
+    var solarTopMat = new THREE.MeshStandardMaterial({
+      map: solarTexture,
+      roughness: 0.22,
+      metalness: 0.35
+    });
+
+    // BoxGeometry face order: +x, -x, +y (top), -y, +z, -z
+    var solarMaterials = [frameMat, frameMat, solarTopMat, frameMat, frameMat, frameMat];
+    var solarPanelMesh = new THREE.Mesh(new THREE.BoxGeometry(80, 5, 60), solarMaterials);
+    solarPanelMesh.rotation.x = 10 * (Math.PI / 180);
+    solarPanelMesh.castShadow = true;
+    solarPanelMesh.receiveShadow = true;
+    solarGroup.add(solarPanelMesh);
+
+    // Aluminum mounting collar beneath solar panel
+    var mountStem = new THREE.Mesh(
+      new THREE.CylinderGeometry(5, 6.5, 6, 20),
+      new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.5, metalness: 0.5 })
+    );
+    mountStem.position.set(0, -4.5, 0);
+    mountStem.castShadow = true;
+    solarGroup.add(mountStem);
+
+    addHotspotTo(solarGroup, new THREE.Vector3(24, 6, 16), {
+      title: 'Solar Panel',
+      getDescription: function () {
+        return '10W Solar Panel • Powers & charges Node-01 (Status: Active Charging)';
+      }
+    });
+
+    deviceGroup.add(solarGroup);
+    registerPart(solarGroup, 26, 66);
+
+    // ---------------------------------------------------------
+    // Component 2: Wi-Fi Antenna (~3 x 20 x 3 + top sphere)
+    // ---------------------------------------------------------
+    var antennaGroup = new THREE.Group();
+    var antennaMat = new THREE.MeshStandardMaterial({
+      color: 0xe2e8f0,
+      roughness: 0.35,
+      metalness: 0.15
+    });
+
+    var antennaRod = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 20, 20), antennaMat);
+    antennaRod.position.y = 10;
+    antennaRod.castShadow = true;
+    antennaGroup.add(antennaRod);
+
+    var antennaTip = new THREE.Mesh(new THREE.SphereGeometry(2.1, 20, 20), antennaMat);
+    antennaTip.position.y = 20.2;
+    antennaTip.castShadow = true;
+    antennaGroup.add(antennaTip);
+
+    // Dark SMA connector base & horizontal side arm
+    var smaMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.4, metalness: 0.7 });
+    var smaCollar = new THREE.Mesh(new THREE.CylinderGeometry(2.3, 2.3, 3.2, 16), smaMat);
+    smaCollar.position.y = 1.2;
+    smaCollar.castShadow = true;
+    antennaGroup.add(smaCollar);
+
+    var sideArm = new THREE.Mesh(new THREE.BoxGeometry(5, 2.6, 3.2), smaMat);
+    sideArm.position.set(-2.5, 0, 0);
+    sideArm.castShadow = true;
+    antennaGroup.add(sideArm);
+
+    antennaGroup.position.z = -12;
+
+    addHotspotTo(antennaGroup, new THREE.Vector3(2.8, 16, 0), {
+      title: 'Wi-Fi Antenna',
+      description: 'Wi-Fi Antenna - 2.4GHz connectivity'
+    });
+
+    deviceGroup.add(antennaGroup);
+    registerPart(antennaGroup, 8, 44, 38, 46);
+
+    // ---------------------------------------------------------
+    // Component 3: Top Enclosure (70 x 25 x 50 green rounded box)
+    // ---------------------------------------------------------
+    var topEnclosureGroup = new THREE.Group();
+    var topEncGeom = createRoundedBoxGeometry(70, 25, 50, 4.5);
+    var topEncMat = new THREE.MeshStandardMaterial({
+      color: 0x1e5631,
+      roughness: 0.38,
+      metalness: 0.1,
+      transparent: true,
+      opacity: 0.82
+    });
+    var topEncMesh = new THREE.Mesh(topEncGeom, topEncMat);
+    topEncMesh.castShadow = true;
+    topEncMesh.receiveShadow = true;
+    topEnclosureGroup.add(topEncMesh);
+
+    // Rubberized waterproof gasket seam rim
+    var gasketMesh = new THREE.Mesh(
+      createRoundedBoxGeometry(71, 2.2, 51, 4.5),
+      new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.85, metalness: 0.05 })
+    );
+    gasketMesh.position.y = -11.8;
+    topEnclosureGroup.add(gasketMesh);
+
+    addHotspotTo(topEnclosureGroup, new THREE.Vector3(-32, 6, 22), {
+      title: 'Waterproof Enclosure',
+      description: 'Waterproof IP65 Enclosure'
+    });
+
+    deviceGroup.add(topEnclosureGroup);
+    registerPart(topEnclosureGroup, 7.5, 38);
+
+    // ---------------------------------------------------------
+    // Component 4: PCB / ESP32 Board (~50 x 2 x 35 + SMD parts)
+    // ---------------------------------------------------------
+    var pcbGroup = new THREE.Group();
+    var pcbTex = createPCBTexture();
+    var pcbEdgeMat = new THREE.MeshStandardMaterial({ color: 0x14532d, roughness: 0.5 });
+    var pcbTopMat = new THREE.MeshStandardMaterial({ map: pcbTex, roughness: 0.4, metalness: 0.15 });
+    var pcbMaterials = [pcbEdgeMat, pcbEdgeMat, pcbTopMat, pcbEdgeMat, pcbEdgeMat, pcbEdgeMat];
+
+    var pcbBoard = new THREE.Mesh(new THREE.BoxGeometry(50, 2, 35), pcbMaterials);
+    pcbBoard.castShadow = true;
+    pcbBoard.receiveShadow = true;
+    pcbGroup.add(pcbBoard);
+
+    // ESP32 module base & silver RF shield
+    var espSubstrate = new THREE.Mesh(
+      new THREE.BoxGeometry(20, 1.2, 16),
+      new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.5 })
+    );
+    espSubstrate.position.set(-4, 1.6, -2);
+    espSubstrate.castShadow = true;
+    pcbGroup.add(espSubstrate);
+
+    var espShield = new THREE.Mesh(
+      new THREE.BoxGeometry(14, 2.6, 14),
+      new THREE.MeshStandardMaterial({ color: 0xcbd5e1, roughness: 0.25, metalness: 0.85 })
+    );
+    espShield.position.set(-6.5, 3.0, -2);
+    espShield.castShadow = true;
+    pcbGroup.add(espShield);
+
+    // Gold PCB antenna trace on ESP32
+    var espTrace = new THREE.Mesh(
+      new THREE.BoxGeometry(4, 0.4, 10),
+      new THREE.MeshStandardMaterial({ color: 0xfacc15, roughness: 0.3, metalness: 0.8 })
+    );
+    espTrace.position.set(3.2, 2.3, -2);
+    pcbGroup.add(espTrace);
+
+    // Tiny colored SMD components (IC, capacitors, LEDs, JST header)
+    var smdDefs = [
+      { size: [5, 1.4, 4], pos: [14, 1.7, -8], color: 0x1e293b }, // UART/Regulator IC
+      { size: [3, 1.2, 2], pos: [14, 1.6, 3], color: 0xeab308 },  // Tantalum cap
+      { size: [2.2, 1, 1.6], pos: [9, 1.5, 9], color: 0xb45309 }, // Ceramic cap
+      { size: [2.2, 1, 1.6], pos: [-18, 1.5, 10], color: 0xb45309 },
+      { size: [6, 2.8, 4], pos: [16, 2.4, 11], color: 0xf8fafc }, // JST battery connector
+      { size: [12, 2.5, 2.6], pos: [-8, 2.2, 13], color: 0x111827 } // Pin header
+    ];
+    smdDefs.forEach(function (item) {
+      var mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(item.size[0], item.size[1], item.size[2]),
+        new THREE.MeshStandardMaterial({ color: item.color, roughness: 0.45, metalness: 0.2 })
+      );
+      mesh.position.set(item.pos[0], item.pos[1], item.pos[2]);
+      mesh.castShadow = true;
+      pcbGroup.add(mesh);
+    });
+
+    // Status LEDs
+    var powerLed = new THREE.Mesh(
+      new THREE.BoxGeometry(1.6, 0.9, 1.2),
+      new THREE.MeshStandardMaterial({ color: 0x22c55e, emissive: 0x22c55e, emissiveIntensity: 0.9 })
+    );
+    powerLed.position.set(19, 1.45, -12);
+    pcbGroup.add(powerLed);
+
+    var txLed = new THREE.Mesh(
+      new THREE.BoxGeometry(1.6, 0.9, 1.2),
+      new THREE.MeshStandardMaterial({ color: 0x3b82f6, emissive: 0x3b82f6, emissiveIntensity: 0.8 })
+    );
+    txLed.position.set(19, 1.45, -8.5);
+    pcbGroup.add(txLed);
+
+    addHotspotTo(pcbGroup, new THREE.Vector3(-8, 6, -2), {
+      title: 'ESP32 Microcontroller',
+      description: 'ESP32 Microcontroller - Brain of the system'
+    });
+
+    deviceGroup.add(pcbGroup);
+    registerPart(pcbGroup, 4, 15);
+
+    // ---------------------------------------------------------
+    // Component 5: Battery (Green 3.7V Li-ion cylinder, r=8, l=30)
+    // ---------------------------------------------------------
+    var batteryGroup = new THREE.Group();
+    var batteryWrapMat = new THREE.MeshStandardMaterial({
+      color: 0x22c55e,
+      roughness: 0.35,
+      metalness: 0.15
+    });
+    var batteryCell = new THREE.Mesh(new THREE.CylinderGeometry(8, 8, 30, 28), batteryWrapMat);
+    batteryCell.rotation.z = Math.PI / 2;
+    batteryCell.castShadow = true;
+    batteryCell.receiveShadow = true;
+    batteryGroup.add(batteryCell);
+
+    var terminalMat = new THREE.MeshStandardMaterial({
+      color: 0xd1d5db,
+      roughness: 0.25,
+      metalness: 0.85
+    });
+    var posCap = new THREE.Mesh(new THREE.CylinderGeometry(7.5, 7.5, 0.8, 24), terminalMat);
+    posCap.rotation.z = Math.PI / 2;
+    posCap.position.x = 15.2;
+    batteryGroup.add(posCap);
+
+    var posNub = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 3.2, 1.2, 20), terminalMat);
+    posNub.rotation.z = Math.PI / 2;
+    posNub.position.x = 15.8;
+    batteryGroup.add(posNub);
+
+    var negCap = new THREE.Mesh(new THREE.CylinderGeometry(7.5, 7.5, 0.8, 24), terminalMat);
+    negCap.rotation.z = Math.PI / 2;
+    negCap.position.x = -15.2;
+    batteryGroup.add(negCap);
+
+    // Dark label ring around battery
+    var labelBand = new THREE.Mesh(
+      new THREE.CylinderGeometry(8.1, 8.1, 8, 28, 1, true),
+      new THREE.MeshStandardMaterial({ color: 0x14532d, roughness: 0.5, side: THREE.DoubleSide })
+    );
+    labelBand.rotation.z = Math.PI / 2;
+    batteryGroup.add(labelBand);
+
+    batteryGroup.position.set(-8, -8, 4);
+
+    addHotspotTo(batteryGroup, new THREE.Vector3(-4, 6.5, 8.5), {
+      title: 'Li-ion Battery',
+      description: '3.7V 2600mAh Li-ion Battery'
+    });
+
+    deviceGroup.add(batteryGroup);
+    registerPart(batteryGroup, -8, -1);
+
+    // ---------------------------------------------------------
+    // Component 6: TP4056 Module (Tiny blue rectangle near battery)
+    // ---------------------------------------------------------
+    var tpGroup = new THREE.Group();
+    var tpBoard = new THREE.Mesh(
+      new THREE.BoxGeometry(17, 2, 12),
+      new THREE.MeshStandardMaterial({ color: 0x1d4ed8, roughness: 0.4, metalness: 0.15 })
+    );
+    tpBoard.castShadow = true;
+    tpGroup.add(tpBoard);
+
+    // USB charging port & charging IC on TP4056
+    var usbPort = new THREE.Mesh(
+      new THREE.BoxGeometry(5.5, 2.8, 6.8),
+      new THREE.MeshStandardMaterial({ color: 0xcbd5e1, roughness: 0.25, metalness: 0.85 })
+    );
+    usbPort.position.set(6.2, 1.6, 0);
+    usbPort.castShadow = true;
+    tpGroup.add(usbPort);
+
+    var tpChip = new THREE.Mesh(
+      new THREE.BoxGeometry(3.8, 1.1, 3.8),
+      new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.5 })
+    );
+    tpChip.position.set(-1.5, 1.5, 0);
+    tpGroup.add(tpChip);
+
+    var chargeLed = new THREE.Mesh(
+      new THREE.BoxGeometry(1.4, 0.8, 1.2),
+      new THREE.MeshStandardMaterial({ color: 0xef4444, emissive: 0xef4444, emissiveIntensity: 0.85 })
+    );
+    chargeLed.position.set(-5.5, 1.4, 3);
+    tpGroup.add(chargeLed);
+
+    tpGroup.position.set(18, -8, 4);
+
+    deviceGroup.add(tpGroup);
+    registerPart(tpGroup, -8, -16);
+
+    // ---------------------------------------------------------
+    // Component 7: Bottom Enclosure (70 x 15 x 50 dark green/black)
+    // ---------------------------------------------------------
+    var bottomEnclosureGroup = new THREE.Group();
+    var bottomEncGeom = createRoundedBoxGeometry(70, 15, 50, 4.5);
+    var bottomEncMat = new THREE.MeshStandardMaterial({
+      color: 0x12261a,
+      roughness: 0.5,
+      metalness: 0.12
+    });
+    var bottomEncMesh = new THREE.Mesh(bottomEncGeom, bottomEncMat);
+    bottomEncMesh.castShadow = true;
+    bottomEncMesh.receiveShadow = true;
+    bottomEnclosureGroup.add(bottomEncMesh);
+
+    deviceGroup.add(bottomEnclosureGroup);
+    registerPart(bottomEnclosureGroup, -12.5, -32);
+
+    // ---------------------------------------------------------
+    // Component 8: Soil Probes (5 metallic cylinders, r=3, l=40)
+    // ---------------------------------------------------------
+    var probesGroup = new THREE.Group();
+    var probeMat = new THREE.MeshStandardMaterial({
+      color: 0x94a3b8,
+      roughness: 0.25,
+      metalness: 0.85
+    });
+    var grommetMat = new THREE.MeshStandardMaterial({
+      color: 0x0f172a,
+      roughness: 0.8,
+      metalness: 0.1
+    });
+
+    var probeXPositions = [-22, -11, 0, 11, 22];
+    probeXPositions.forEach(function (px) {
+      var probeUnit = new THREE.Group();
+      probeUnit.position.set(px, 0, 0);
+
+      var shaft = new THREE.Mesh(new THREE.CylinderGeometry(3, 3, 40, 20), probeMat);
+      shaft.castShadow = true;
+      shaft.receiveShadow = true;
+      probeUnit.add(shaft);
+
+      // Tapered probe tip pointing downward
+      var tip = new THREE.Mesh(new THREE.ConeGeometry(3, 6, 20), probeMat);
+      tip.rotation.x = Math.PI;
+      tip.position.y = -23;
+      tip.castShadow = true;
+      probeUnit.add(tip);
+
+      // Waterproof rubber grommet at top of probe
+      var grommet = new THREE.Mesh(new THREE.CylinderGeometry(4.1, 4.1, 3, 20), grommetMat);
+      grommet.position.y = 18.5;
+      probeUnit.add(grommet);
+
+      probesGroup.add(probeUnit);
+    });
+
+    addHotspotTo(probesGroup, new THREE.Vector3(0, -10, 4.5), {
+      title: 'Multi-Probe Sensor Array',
+      getDescription: function () {
+        var d = global.__agrisenseLatest;
+        if (!d || d.moisture == null) {
+          return 'Measures Moisture, pH, NPK, EC & Soil Temp (Waiting for ESP32 reading...)';
+        }
+        var mPct = Math.round(Math.max(0, Math.min(100, ((4095 - parseFloat(d.moisture)) / 2595) * 100)));
+        var ph = d.ph != null ? parseFloat(d.ph).toFixed(1) : '—';
+        var ec = d.ec != null ? d.ec : '—';
+        var npk = (d.npk_n ?? '—') + '/' + (d.npk_p ?? '—') + '/' + (d.npk_k ?? '—');
+        return 'Moisture: ' + mPct + '% • pH: ' + ph + ' • EC: ' + ec + ' • NPK: ' + npk;
+      }
+    });
+
+    deviceGroup.add(probesGroup);
+    registerPart(probesGroup, -40, -66);
+
+    // ---------------------------------------------------------
+    // UI Controls: Exploded / Assembled Toggle + Info Tooltip
+    // ---------------------------------------------------------
+    var isExploded = false;
+
+    var toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.textContent = 'Exploded View';
+    toggleBtn.style.cssText = [
+      'position: absolute',
+      'top: 16px',
+      'left: 16px',
+      'z-index: 20',
+      'padding: 10px 16px',
+      'border: 1px solid rgba(20, 83, 45, 0.25)',
+      'border-radius: 8px',
+      'background: #ffffff',
+      'color: #14532d',
+      'font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif',
+      'font-size: 13px',
+      'font-weight: 600',
+      'cursor: pointer',
+      'box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08)',
+      'transition: background 0.2s, color 0.2s, transform 0.15s'
+    ].join(';');
+
+    function updateToggleButton() {
+      if (isExploded) {
+        toggleBtn.textContent = 'Assembled View';
+        toggleBtn.style.background = '#14532d';
+        toggleBtn.style.color = '#ffffff';
+      } else {
+        toggleBtn.textContent = 'Exploded View';
+        toggleBtn.style.background = '#ffffff';
+        toggleBtn.style.color = '#14532d';
+      }
+    }
+
+    var hasExternalBtn = Boolean(document.getElementById('exploded-toggle-btn'));
+    if (!hasExternalBtn) {
+      toggleBtn.addEventListener('click', function () {
+        isExploded = !isExploded;
+        updateToggleButton();
+      });
+      container.appendChild(toggleBtn);
+    }
+
+    // Hint badge
+    var hintEl = document.createElement('div');
+    hintEl.textContent = 'Drag to orbit • Scroll to zoom • Click glowing hotspots';
+    hintEl.style.cssText = [
+      'position: absolute',
+      'bottom: 14px',
+      'left: 50%',
+      'transform: translateX(-50%)',
+      'z-index: 15',
+      'padding: 6px 12px',
+      'border-radius: 999px',
+      'background: rgba(255, 255, 255, 0.85)',
+      'color: #334155',
+      'font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif',
+      'font-size: 12px',
+      'pointer-events: none',
+      'box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06)'
+    ].join(';');
+    container.appendChild(hintEl);
+
+    // Hotspot Info Tooltip Overlay
+    var tooltip = document.createElement('div');
+    tooltip.style.cssText = [
+      'position: absolute',
+      'display: none',
+      'z-index: 30',
+      'max-width: 240px',
+      'padding: 10px 14px',
+      'border-radius: 10px',
+      'background: rgba(15, 23, 42, 0.94)',
+      'color: #f8fafc',
+      'font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif',
+      'box-shadow: 0 10px 25px rgba(0, 0, 0, 0.22)',
+      'border: 1px solid rgba(52, 211, 153, 0.45)',
+      'pointer-events: auto'
+    ].join(';');
+
+    var tooltipHeader = document.createElement('div');
+    tooltipHeader.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px;';
+
+    var tooltipTitle = document.createElement('strong');
+    tooltipTitle.style.cssText = 'font-size:13px;color:#34d399;';
+
+    var tooltipClose = document.createElement('button');
+    tooltipClose.type = 'button';
+    tooltipClose.textContent = '×';
+    tooltipClose.style.cssText = 'background:none;border:none;color:#94a3b8;font-size:16px;line-height:1;cursor:pointer;padding:0;';
+
+    var tooltipDesc = document.createElement('div');
+    tooltipDesc.style.cssText = 'font-size:12px;line-height:1.4;color:#e2e8f0;';
+
+    tooltipHeader.appendChild(tooltipTitle);
+    tooltipHeader.appendChild(tooltipClose);
+    tooltip.appendChild(tooltipHeader);
+    tooltip.appendChild(tooltipDesc);
+    container.appendChild(tooltip);
+
+    var activeHotspotMesh = null;
+
+    function hideTooltip() {
+      activeHotspotMesh = null;
+      tooltip.style.display = 'none';
+    }
+
+    tooltipClose.addEventListener('click', function (e) {
+      e.stopPropagation();
+      hideTooltip();
+    });
+
+    function updateTooltipPosition() {
+      if (!activeHotspotMesh) return;
+      var worldPos = new THREE.Vector3();
+      activeHotspotMesh.getWorldPosition(worldPos);
+      var projected = worldPos.project(camera);
+
+      if (projected.z > 1) {
+        tooltip.style.display = 'none';
+        return;
+      }
+
+      tooltip.style.display = 'block';
+      var cw = container.clientWidth || renderer.domElement.clientWidth;
+      var ch = container.clientHeight || renderer.domElement.clientHeight;
+      var sx = (projected.x * 0.5 + 0.5) * cw;
+      var sy = (-projected.y * 0.5 + 0.5) * ch;
+
+      var tw = tooltip.offsetWidth || 200;
+      var th = tooltip.offsetHeight || 64;
+      var left = Math.min(Math.max(12, sx + 14), Math.max(12, cw - tw - 12));
+      var top = Math.min(Math.max(12, sy - th / 2), Math.max(12, ch - th - 12));
+
+      tooltip.style.left = left + 'px';
+      tooltip.style.top = top + 'px';
+    }
+
+    // ---------------------------------------------------------
+    // Raycasting for Hotspot Hover & Click
+    // ---------------------------------------------------------
+    var raycaster = new THREE.Raycaster();
+    var pointer = new THREE.Vector2();
+    var hoveredHotspot = null;
+    var pointerDownPos = { x: 0, y: 0 };
+
+    function getPointerNDC(event) {
+      var rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    }
+
+    function onPointerMove(event) {
+      getPointerNDC(event);
+      raycaster.setFromCamera(pointer, camera);
+      var intersects = raycaster.intersectObjects(hotspotTargets, false);
+      if (intersects.length > 0) {
+        hoveredHotspot = intersects[0].object;
+        renderer.domElement.style.cursor = 'pointer';
+      } else {
+        hoveredHotspot = null;
+        renderer.domElement.style.cursor = 'grab';
+      }
+    }
+
+    function onPointerDown(event) {
+      pointerDownPos.x = event.clientX;
+      pointerDownPos.y = event.clientY;
+    }
+
+    function onPointerUp(event) {
+      var dx = event.clientX - pointerDownPos.x;
+      var dy = event.clientY - pointerDownPos.y;
+      // Ignore orbit drags
+      if (dx * dx + dy * dy > 25) return;
+
+      getPointerNDC(event);
+      raycaster.setFromCamera(pointer, camera);
+      var intersects = raycaster.intersectObjects(hotspotTargets, false);
+
+      if (intersects.length > 0) {
+        var hit = intersects[0].object;
+        var info = hit.userData.hotspotInfo;
+        activeHotspotMesh = hit;
+        tooltipTitle.textContent = info.title;
+        tooltipDesc.textContent = typeof info.getDescription === 'function' ? info.getDescription() : info.description;
+        updateTooltipPosition();
+      } else {
+        hideTooltip();
+      }
+    }
+
+    renderer.domElement.style.cursor = 'grab';
+    renderer.domElement.addEventListener('pointermove', onPointerMove);
+    renderer.domElement.addEventListener('pointerdown', onPointerDown);
+    renderer.domElement.addEventListener('pointerup', onPointerUp);
+
+    // ---------------------------------------------------------
+    // Resize Handling
+    // ---------------------------------------------------------
+    function handleResize() {
+      var w = container.clientWidth || 800;
+      var h = container.clientHeight || 600;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+      updateTooltipPosition();
+    }
+
+    global.addEventListener('resize', handleResize);
+
+    // ---------------------------------------------------------
+    // Animation Loop (requestAnimationFrame + lerp)
+    // ---------------------------------------------------------
+    var clock = new THREE.Clock();
+    var rafId = null;
+
+    function animate() {
+      rafId = global.requestAnimationFrame(animate);
+
+      var delta = Math.min(clock.getDelta(), 0.05);
+      var elapsed = clock.elapsedTime;
+      var lerpFactor = 1 - Math.exp(-6.5 * delta);
+
+      // Smoothly animate each component between assembled and exploded positions
+      for (var i = 0; i < animParts.length; i++) {
+        var part = animParts[i];
+        var targetY = isExploded ? part.explodedY : part.assembledY;
+        var targetX = isExploded ? part.explodedX : part.assembledX;
+        part.group.position.y = THREE.MathUtils.lerp(part.group.position.y, targetY, lerpFactor);
+        part.group.position.x = THREE.MathUtils.lerp(part.group.position.x, targetX, lerpFactor);
+      }
+
+      // Pulse glowing hotspot spheres & highlight hovered hotspot
+      for (var j = 0; j < hotspotGroups.length; j++) {
+        var hs = hotspotGroups[j];
+        var core = hs.userData.coreMesh;
+        var halo = hs.userData.haloMesh;
+        var isHover = hoveredHotspot === core || activeHotspotMesh === core;
+        var pulse = 1 + 0.18 * Math.sin(elapsed * 3.2 + hs.userData.basePhase);
+        var targetScale = isHover ? 1.35 : 1.0;
+
+        core.scale.setScalar(THREE.MathUtils.lerp(core.scale.x, targetScale, 0.18));
+        halo.scale.setScalar(pulse * (isHover ? 1.25 : 1.0));
+        halo.material.opacity = isHover ? 0.55 : 0.25 + 0.12 * Math.sin(elapsed * 3.2 + hs.userData.basePhase);
+      }
+
+      controls.update();
+      updateTooltipPosition();
+      renderer.render(scene, camera);
+    }
+
+    animate();
+
+    // Return optional controller API
+    return {
+      setExploded: function (exploded) {
+        isExploded = Boolean(exploded);
+        updateToggleButton();
+      },
+      toggleExploded: function () {
+        isExploded = !isExploded;
+        updateToggleButton();
+      },
+      dispose: function () {
+        if (rafId !== null) global.cancelAnimationFrame(rafId);
+        if (idleTimer) clearTimeout(idleTimer);
+        global.removeEventListener('resize', handleResize);
+        renderer.domElement.removeEventListener('pointermove', onPointerMove);
+        renderer.domElement.removeEventListener('pointerdown', onPointerDown);
+        renderer.domElement.removeEventListener('pointerup', onPointerUp);
+        controls.dispose();
+        renderer.dispose();
+        if (renderer.domElement.parentNode === container) container.removeChild(renderer.domElement);
+        if (toggleBtn.parentNode === container) container.removeChild(toggleBtn);
+        if (hintEl.parentNode === container) container.removeChild(hintEl);
+        if (tooltip.parentNode === container) container.removeChild(tooltip);
+      }
+    };
+  }
+
+  global.initDevice3D = initDevice3D;
+})(window);
+{% endraw %}
+</script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   AgriSense AI — Dashboard JavaScript
+   ═══════════════════════════════════════════════════════════════ */
+(function () {
+  'use strict';
+
+  /* ── Cached DOM refs ───────────────────────────── */
+  const $ = id => document.getElementById(id);
+
+  /* latest data cache */
+  let latestData = null;
+  let chartInstances = {};
+
+  /* ─────────────────────────────────────────────────
+     1. STATUS HELPERS
+     ───────────────────────────────────────────────── */
+  function getMoisturePercent(raw) {
+    if (raw == null) return null;
+    const dryValue = 4095;
+    const wetValue = 1500;
+    const pct = ((dryValue - parseFloat(raw)) / (dryValue - wetValue)) * 100;
+    return Math.round(Math.max(0, Math.min(100, pct)));
+  }
+
+  function getMoistureStatus(pct) {
+    if (pct == null) return 'warning';
+    if (pct < 20) return 'critical';
+    if (pct < 40) return 'warning';
+    return 'good';
+  }
+
+  function getPhStatus(val) {
+    if (val == null) return 'warning';
+    val = parseFloat(val);
+    if (val < 5.5 || val > 8.5) return 'critical';
+    if (val < 6.0 || val > 7.5) return 'warning';
+    return 'good';
+  }
+
+  function getTempStatus(val) {
+    if (val == null) return 'warning';
+    val = parseFloat(val);
+    if (val < 10 || val > 40) return 'critical';
+    if (val < 15 || val > 35) return 'warning';
+    return 'good';
+  }
+
+  function getECStatus(val) {
+    if (val == null) return 'warning';
+    val = parseFloat(val);
+    // Support both dS/m (0.5 - 4.0) and µS/cm (> 20)
+    if (val > 20) {
+      if (val < 200 || val > 2000) return 'critical';
+      if (val < 400 || val > 1500) return 'warning';
+      return 'good';
+    }
+    if (val > 4.0 || val < 0.2) return 'critical';
+    if (val > 2.0 || val < 0.5) return 'warning';
+    return 'good';
+  }
+
+  function getNPKStatus(n, p, k) {
+    n = parseFloat(n) || 0;
+    p = parseFloat(p) || 0;
+    k = parseFloat(k) || 0;
+    if (n < 20 || p < 10 || k < 10) return 'critical';
+    if (n < 40 || p < 20 || k < 20) return 'warning';
+    return 'good';
+  }
+
+  function getRainStatus(val) {
+    if (val == null) return 'warning';
+    val = parseFloat(val);
+    return val > 500 ? 'good' : (val > 300 ? 'warning' : 'critical');
+  }
+
+  function statusLabel(status) {
+    return status === 'good' ? 'Good' : status === 'warning' ? 'Low' : 'Critical';
+  }
+
+  function setBadge(el, status) {
+    if (!el) return;
+    el.className = 'badge status-' + status;
+    el.textContent = statusLabel(status);
+  }
+
+  /* ─────────────────────────────────────────────────
+     2. AUTO-REFRESH — Sensor Data (every 10s)
+     ───────────────────────────────────────────────── */
+  function fetchLatest() {
+    fetch("{{ url_for('api_latest') }}")
+      .then(r => r.json())
+      .then(d => {
+        latestData = d;
+        window.__agrisenseLatest = d;
+        updateSensorUI(d);
+        updateAlerts(d);
+      })
+      .catch(e => console.warn('fetchLatest error:', e));
+  }
+
+  function updateSensorUI(d) {
+    if (!d) return;
+
+    /* ── Home tab quick grid ──── */
+    const moistPct = getMoisturePercent(d.moisture);
+    setText('v-moisture', moistPct != null ? moistPct + '%' : '—');
+    setBadge($('b-moisture'), getMoistureStatus(moistPct));
+
+    setText('v-ph', d.ph != null ? parseFloat(d.ph).toFixed(1) : '—');
+    setBadge($('b-ph'), getPhStatus(d.ph));
+
+    if (d.npk_n != null) {
+      setText('v-npk', 'N' + d.npk_n + ' P' + d.npk_p + ' K' + d.npk_k);
+    }
+    setBadge($('b-npk'), getNPKStatus(d.npk_n, d.npk_p, d.npk_k));
+
+    setText('v-soil_temp', d.soil_temp != null ? d.soil_temp + '°C' : '—');
+    setBadge($('b-soil_temp'), getTempStatus(d.soil_temp));
+
+    setText('v-rain', d.rain_detected ? 'Detected' : 'None');
+    setBadge($('b-rain'), d.rain_detected ? 'warning' : 'good');
+
+    setText('v-ec', d.ec != null ? d.ec : '—');
+    setBadge($('b-ec'), getECStatus(d.ec));
+
+    /* ── Sensor detail tab ──── */
+    setText('sd-moisture', moistPct != null ? moistPct + '%' : '—');
+    setText('sd-moisture-raw', 'Raw: ' + (d.moisture || '—'));
+    setBar('sd-moisture-bar', moistPct || 0, 'var(--emerald)');
+
+    setText('sd-soil_temp', d.soil_temp != null ? d.soil_temp + '°C' : '—');
+    setBar('sd-soil_temp-bar', Math.min(100, ((d.soil_temp || 0) / 50) * 100), 'var(--warning)');
+
+    setText('sd-ph', d.ph != null ? parseFloat(d.ph).toFixed(1) : '—');
+    setBar('sd-ph-bar', d.ph != null ? (parseFloat(d.ph) / 14 * 100) : 0, 'var(--lime)');
+
+    setText('sd-nitrogen', d.npk_n ?? '—');
+    setBar('sd-nitrogen-bar', Math.min(100, ((d.npk_n || 0) / 100) * 100), 'var(--good)');
+
+    setText('sd-phosphorus', d.npk_p ?? '—');
+    setBar('sd-phosphorus-bar', Math.min(100, ((d.npk_p || 0) / 100) * 100), '#3b82f6');
+
+    setText('sd-potassium', d.npk_k ?? '—');
+    setBar('sd-potassium-bar', Math.min(100, ((d.npk_k || 0) / 100) * 100), '#f97316');
+
+    setText('sd-air_temp', d.air_temp != null ? d.air_temp + '°C' : '—');
+    setText('sd-humidity', 'Humidity: ' + (d.humidity != null ? d.humidity + '%' : '—'));
+    setBar('sd-humidity-bar', d.humidity || 0, '#06b6d4');
+
+    setText('sd-rain', d.rain_detected ? 'Yes' : 'No');
+    setText('sd-rain-status', d.rain_detected ? 'Raining' : 'No Rain');
+    setBar('sd-rain-bar', d.rain_detected ? 100 : 10, '#6366f1');
+
+    setText('sd-ec', d.ec ?? '—');
+    setBar('sd-ec-bar', Math.min(100, ((d.ec || 0) / 5) * 100), 'var(--warning)');
+
+    /* ── Pump state ──── */
+    if (d.mode != null) setText('mode-label', d.mode.toUpperCase());
+    const pumpEl = $('pump-state');
+    if (pumpEl && d.pump_decision != null) {
+      const isOn = d.pump_decision === 'ON' || d.pump_decision === 1 || d.pump_decision === true;
+      pumpEl.textContent = isOn ? 'ON' : 'OFF';
+      pumpEl.className = 'badge ' + (isOn ? 'pump-state-on' : 'pump-state-off');
+    }
+    if (d.pump_reason) setText('pump-reason', d.pump_reason);
+  }
+
+  function setText(id, val) {
+    const el = $(id);
+    if (el) el.textContent = val;
+  }
+
+  function setBar(id, pct, color) {
+    const el = $(id);
+    if (el) {
+      el.style.width = Math.min(100, Math.max(0, pct)) + '%';
+      if (color) el.style.background = color;
+    }
+  }
+
+  /* ─────────────────────────────────────────────────
+     3. HEALTH SCORE
+     ───────────────────────────────────────────────── */
+  function fetchHealthScore() {
+    fetch("{{ url_for('get_health_score') }}")
+      .then(r => r.json())
+      .then(d => {
+        const score = d.score != null ? d.score : 0;
+        const circumference = 2 * Math.PI * 38; // 238.76
+        const offset = circumference - (score / 100) * circumference;
+
+        const ring = $('health-ring');
+        if (ring) ring.setAttribute('stroke-dashoffset', offset);
+
+        setText('health-score-value', score + '%');
+        setText('health-score-display', score + '%');
+
+        let label = 'Poor';
+        if (score >= 80) label = 'Excellent';
+        else if (score >= 60) label = 'Good';
+        else if (score >= 40) label = 'Fair';
+        setText('health-score-label', label);
+
+        setText('analytics-health-score', score);
+      })
+      .catch(() => {
+        setText('health-score-value', '—');
+        setText('health-score-label', 'Unavailable');
+      });
+  }
+
+  /* ─────────────────────────────────────────────────
+     4. PUMP CONTROL
+     ───────────────────────────────────────────────── */
+  window.setControl = function (action) {
+    fetch("{{ url_for('control_pump') }}", {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: action })
+    })
+    .then(r => r.json())
+    .then(d => {
+      if (d.error) alert(d.error);
+      else fetchLatest();
+    })
+    .catch(e => alert('Pump control error: ' + e));
+  };
+
+  /* ─────────────────────────────────────────────────
+     5. TASKS CRUD
+     ───────────────────────────────────────────────── */
+  function loadTasks() {
+    fetch("{{ url_for('get_tasks') }}")
+      .then(r => r.json())
+      .then(tasks => renderTasks(tasks))
+      .catch(() => {
+        $('task-container').innerHTML = '<p style="font-size:13px;color:var(--text-muted);">Unable to load tasks.</p>';
+      });
+  }
+
+  function renderTasks(tasks) {
+    const container = $('task-container');
+    if (!tasks || tasks.length === 0) {
+      container.innerHTML = '<p style="font-size:13px;color:var(--text-muted);">No tasks yet. Add one below!</p>';
+      setText('task-count', '0/0');
+      setBar('task-progress', 0);
+      setBar('task-analytics-progress', 0);
+      setText('tasks-completed-pct', '0%');
+      setText('tasks-completed-text', '0 of 0 tasks completed');
+      return;
+    }
+
+    const done = tasks.filter(t => t.completed).length;
+    const total = tasks.length;
+    const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+
+    setText('task-count', done + '/' + total);
+    setBar('task-progress', pct);
+    setBar('task-analytics-progress', pct);
+    setText('tasks-completed-pct', pct + '%');
+    setText('tasks-completed-text', done + ' of ' + total + ' tasks completed');
+
+    container.innerHTML = tasks.map(t => `
+      <div class="task-item ${t.completed ? 'completed' : ''}">
+        <input type="checkbox" ${t.completed ? 'checked' : ''} onchange="toggleTask(${t.id})">
+        <div>
+          <div class="task-title">${escHTML(t.title)}</div>
+          ${t.description ? '<div class="task-desc">' + escHTML(t.description) + '</div>' : ''}
+        </div>
+        <button class="task-delete" onclick="deleteTask(${t.id})" title="Delete">✕</button>
+      </div>
+    `).join('');
+  }
+
+  window.addTask = function () {
+    const titleEl = $('new-task-title');
+    const title = titleEl.value.trim();
+    if (!title) return;
+
+    fetch("{{ url_for('create_task') }}", {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: title, description: '' })
+    })
+    .then(r => r.json())
+    .then(() => { titleEl.value = ''; loadTasks(); })
+    .catch(e => alert('Error adding task: ' + e));
+  };
+
+  window.toggleTask = function (id) {
+    fetch("{{ url_for('get_tasks') }}/" + id + "/toggle", { method: 'POST' })
+      .then(() => loadTasks())
+      .catch(e => alert('Error toggling task: ' + e));
+  };
+
+  window.deleteTask = function (id) {
+    if (!confirm('Delete this task?')) return;
+    fetch("{{ url_for('get_tasks') }}/" + id, { method: 'DELETE' })
+      .then(() => loadTasks())
+      .catch(e => alert('Error deleting task: ' + e));
+  };
+
+  /* ─────────────────────────────────────────────────
+     6. CROP RECOMMENDATIONS
+     ───────────────────────────────────────────────── */
+  function fetchCropMatch() {
+    fetch("{{ url_for('get_crop_match') }}")
+      .then(r => r.json())
+      .then(crops => {
+        const c = $('crop-container');
+        if (!crops || crops.length === 0) {
+          c.innerHTML = '<p style="font-size:13px;color:var(--text-muted);grid-column:1/-1;">No recommendations yet.</p>';
+          return;
+        }
+        c.innerHTML = crops.map(crop => {
+          const emoji = crop.emoji || crop.image_url || '🌾';
+          return `
+            <div class="crop-card">
+              <div class="crop-emoji">${emoji}</div>
+              <div class="crop-name">${escHTML(crop.name)}</div>
+              <div class="match-bar"><div class="match-fill" style="width:${crop.match_pct}%;"></div></div>
+              <div class="match-pct">${crop.match_pct}% match</div>
+            </div>`;
+        }).join('');
+      })
+      .catch(() => {
+        $('crop-container').innerHTML = '<p style="font-size:13px;color:var(--text-muted);grid-column:1/-1;">Unable to load.</p>';
+      });
+  }
+
+  /* ─────────────────────────────────────────────────
+     7. CHARTS (Chart.js)
+     ───────────────────────────────────────────────── */
+  function fetchHistory() {
+    fetch("{{ url_for('get_history') }}?limit=50")
+      .then(r => r.json())
+      .then(data => {
+        if (!data || data.length === 0) return;
+        renderCharts(data);
+        renderHistoryTable(data);
+      })
+      .catch(e => console.warn('fetchHistory:', e));
+  }
+
+  function renderCharts(data) {
+    const chrono = [...data].reverse();
+    const labels = chrono.map(d => {
+      const dt = new Date(d.timestamp);
+      return dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    });
+
+    const chartOpts = (label, color) => ({
+      type: 'line',
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { display: true, ticks: { maxTicksLimit: 8, font: { size: 10 } } },
+          y: { display: true, ticks: { font: { size: 10 } } }
+        },
+        elements: { point: { radius: 2 }, line: { tension: 0.4, borderWidth: 2 } }
+      }
+    });
+
+    // Moisture chart
+    createOrUpdateChart('moisture-chart', {
+      ...chartOpts('Moisture', '#10b981'),
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Moisture %',
+          data: chrono.map(d => getMoisturePercent(d.moisture)),
+          borderColor: '#10b981',
+          backgroundColor: 'rgba(16,185,129,0.1)',
+          fill: true
+        }]
+      }
+    });
+
+    // pH chart
+    createOrUpdateChart('ph-chart', {
+      ...chartOpts('pH', '#84cc16'),
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'pH',
+          data: chrono.map(d => d.ph),
+          borderColor: '#84cc16',
+          backgroundColor: 'rgba(132,204,22,0.1)',
+          fill: true
+        }]
+      }
+    });
+
+    // Temperature chart
+    createOrUpdateChart('temp-chart', {
+      ...chartOpts('Temp', '#f59e0b'),
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Soil Temp °C',
+          data: chrono.map(d => d.soil_temp),
+          borderColor: '#f59e0b',
+          backgroundColor: 'rgba(245,158,11,0.1)',
+          fill: true
+        }]
+      }
+    });
+
+    // Health trend (small)
+    createOrUpdateChart('health-trend-chart', {
+      type: 'line',
+      data: {
+        labels: labels.slice(-10),
+        datasets: [{
+          data: chrono.slice(-10).map(d => {
+            const m = getMoisturePercent(d.moisture) || 50;
+            const p = d.ph ? (1 - Math.abs(parseFloat(d.ph) - 6.5) / 7) * 100 : 50;
+            return Math.round((m + p) / 2);
+          }),
+          borderColor: '#10b981',
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.4,
+          fill: false
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { x: { display: false }, y: { display: false, min: 0, max: 100 } }
+      }
+    });
+  }
+
+  function createOrUpdateChart(canvasId, config) {
+    if (chartInstances[canvasId]) {
+      chartInstances[canvasId].destroy();
+    }
+    const ctx = $(canvasId);
+    if (ctx) {
+      chartInstances[canvasId] = new Chart(ctx, config);
+    }
+  }
+
+  function renderHistoryTable(data) {
+    const tbody = $('history-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = data.map(d => {
+      const dt = new Date(d.timestamp);
+      const time = dt.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      return `<tr>
+        <td>${time}</td>
+        <td>${getMoisturePercent(d.moisture) ?? '—'}%</td>
+        <td>${d.ph != null ? parseFloat(d.ph).toFixed(1) : '—'}</td>
+        <td>${d.soil_temp ?? '—'}</td>
+        <td>${d.ec ?? '—'}</td>
+        <td>${d.npk_n ?? '—'}</td>
+        <td>${d.npk_p ?? '—'}</td>
+        <td>${d.npk_k ?? '—'}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  /* ─────────────────────────────────────────────────
+     8. AI CHAT
+     ───────────────────────────────────────────────── */
+  window.askAI = function () {
+    const input = $('chat-question');
+    const q = input.value.trim();
+    if (!q) return;
+
+    appendChat('user', q);
+    input.value = '';
+
+    fetch("{{ url_for('api_ask_ai') }}", {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: q })
+    })
+    .then(r => r.json())
+    .then(d => appendChat('ai', d.answer || d.response || 'No response.'))
+    .catch(() => appendChat('ai', 'Error getting response.'));
+  };
+
+  window.getRecommendation = function () {
+    const reco = $('reco-result');
+    reco.style.display = 'block';
+    reco.textContent = 'Loading recommendation…';
+
+    fetch("{{ url_for('api_recommendation') }}")
+      .then(r => r.json())
+      .then(d => {
+        if (d.error) { reco.textContent = d.error; return; }
+        let text = '';
+        if (d.fertilizer && typeof d.fertilizer === 'object') {
+          const f = d.fertilizer;
+          text += `🧪 Fertilizer (${f.area_acres} acre): Urea ${f.urea_kg} kg, DAP ${f.dap_kg} kg, MOP ${f.mop_kg} kg\n`;
+          text += `📊 N/P/K levels: ${f.n_level} / ${f.p_level} / ${f.k_level}\n`;
+        } else if (d.fertilizer) {
+          text += '🧪 Fertilizer: ' + d.fertilizer + '\n';
+        }
+        if (Array.isArray(d.crops) && d.crops.length) {
+          text += '🌾 Suggested Crops: ' + d.crops.join(', ') + '\n';
+        }
+        reco.textContent = text || 'No recommendation available.';
+        reco.style.whiteSpace = 'pre-line';
+      })
+      .catch(() => { reco.textContent = 'Error fetching recommendation.'; });
+  };
+
+  function appendChat(role, text) {
+    const log = $('chat-log');
+    const div = document.createElement('div');
+    div.className = 'msg ' + role;
+    div.innerHTML = '<strong>' + (role === 'user' ? '🧑‍🌾 You' : '🤖 AI') + ':</strong> ' + escHTML(text);
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  /* ─────────────────────────────────────────────────
+     9. PDF DOWNLOAD (jsPDF)
+     ───────────────────────────────────────────────── */
+  window.downloadPDF = function () {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+
+    doc.setFontSize(18);
+    doc.setTextColor(15, 61, 38);
+    doc.text('AgriSense AI — Soil Report', 14, 22);
+
+    doc.setFontSize(10);
+    doc.setTextColor(107, 122, 112);
+    doc.text('Generated: ' + new Date().toLocaleString(), 14, 30);
+
+    doc.setDrawColor(16, 185, 129);
+    doc.line(14, 34, 196, 34);
+
+    let y = 42;
+    doc.setFontSize(12);
+    doc.setTextColor(26, 46, 34);
+
+    if (latestData) {
+      const fields = [
+        ['Moisture', getMoisturePercent(latestData.moisture) + '%'],
+        ['pH', latestData.ph],
+        ['Soil Temperature', (latestData.soil_temp || '—') + '°C'],
+        ['EC', latestData.ec || '—'],
+        ['Nitrogen', latestData.npk_n ?? '—'],
+        ['Phosphorus', latestData.npk_p ?? '—'],
+        ['Potassium', latestData.npk_k ?? '—'],
+        ['Rain', latestData.rain_detected ? 'Detected' : 'None']
+      ];
+      fields.forEach(([label, val]) => {
+        doc.setFont(undefined, 'bold');
+        doc.text(label + ':', 14, y);
+        doc.setFont(undefined, 'normal');
+        doc.text(String(val), 70, y);
+        y += 8;
+      });
+    } else {
+      doc.text('No sensor data available.', 14, y);
+    }
+
+    // Add history table if available
+    const rows = document.querySelectorAll('#history-tbody tr');
+    if (rows.length > 0 && rows[0].cells.length > 1) {
+      y += 10;
+      doc.setFontSize(14);
+      doc.setFont(undefined, 'bold');
+      doc.text('Sensor History', 14, y);
+      y += 8;
+      doc.setFontSize(8);
+      doc.setFont(undefined, 'normal');
+
+      rows.forEach((row, i) => {
+        if (y > 275) { doc.addPage(); y = 20; }
+        let line = '';
+        row.querySelectorAll('td').forEach(td => { line += td.textContent.trim() + '  |  '; });
+        doc.text(line, 14, y);
+        y += 5;
+      });
+    }
+
+    doc.save('agrisense-soil-report.pdf');
+  };
+
+  /* ─────────────────────────────────────────────────
+     10. 3D DEVICE VIEW (Three.js via static/js/three-device.js)
+     ───────────────────────────────────────────────── */
+  let device3dController = null;
+  let isExploded = false;
+
+  window.toggleExplodedView = function () {
+    if (!device3dController) return;
+    isExploded = !isExploded;
+    device3dController.setExploded(isExploded);
+    const btn = $('exploded-toggle-btn');
+    if (btn) btn.textContent = isExploded ? '🔧 Assembled View' : '💥 Exploded View';
+  };
+
+  /* ─────────────────────────────────────────────────
+     11. SMART ALERTS
+     ───────────────────────────────────────────────── */
+  function updateAlerts(d) {
+    if (!d) return;
+    const alerts = [];
+
+    const moistPct = getMoisturePercent(d.moisture);
+    if (moistPct != null && moistPct < 20) {
+      alerts.push({ type: 'critical', msg: '⚠️ Smart Irrigation alert: irrigate within 2 hours — moisture critically low (' + moistPct + '%)' });
+    } else if (moistPct != null && moistPct < 40) {
+      alerts.push({ type: 'warning', msg: '💧 Moisture is low (' + moistPct + '%). Consider scheduling irrigation.' });
+    }
+
+    const ph = parseFloat(d.ph);
+    if (!isNaN(ph) && (ph < 5.5 || ph > 8.5)) {
+      alerts.push({ type: 'critical', msg: '⚠️ pH out of safe range (' + ph.toFixed(1) + '). pH adjustment needed.' });
+    } else if (!isNaN(ph) && (ph < 6.0 || ph > 7.5)) {
+      alerts.push({ type: 'warning', msg: '🧪 pH slightly off-optimal (' + ph.toFixed(1) + '). Monitor closely.' });
+    }
+
+    const n = parseFloat(d.npk_n) || 0;
+    const p = parseFloat(d.npk_p) || 0;
+    const k = parseFloat(d.npk_k) || 0;
+    if (n < 20) alerts.push({ type: 'warning', msg: '🟢 Nitrogen level low (' + n + ' mg/kg). Consider nitrogen supplementation.' });
+    if (p < 10) alerts.push({ type: 'warning', msg: '🔵 Phosphorus level low (' + p + ' mg/kg). Phosphorus fertilizer recommended.' });
+    if (k < 10) alerts.push({ type: 'warning', msg: '🟠 Potassium level low (' + k + ' mg/kg). Add potassium supplement.' });
+
+    const temp = parseFloat(d.soil_temp);
+    if (!isNaN(temp) && (temp > 40 || temp < 10)) {
+      alerts.push({ type: 'critical', msg: '🌡️ Soil temperature extreme (' + temp + '°C). Protect crops.' });
+    }
+
+    const container = $('alert-container');
+    if (!container) return;
+
+    if (alerts.length === 0) {
+      container.innerHTML = '<div class="alert-bar alert-good">✅ All systems normal — sensors within optimal range.</div>';
+    } else {
+      container.innerHTML = alerts.map(a =>
+        `<div class="alert-bar alert-${a.type}" style="margin-bottom:8px;">${a.msg}</div>`
+      ).join('');
+    }
+  }
+
+  /* ─────────────────────────────────────────────────
+     12. SUB-TAB SWITCHING (Analytics)
+     ───────────────────────────────────────────────── */
+  window.switchSubTab = function (name, btn) {
+    document.querySelectorAll('.sub-panel').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.sub-tab-btn').forEach(b => b.classList.remove('active'));
+
+    const panel = $('sub-' + name);
+    if (panel) panel.classList.add('active');
+    if (btn) btn.classList.add('active');
+  };
+
+  /* ─────────────────────────────────────────────────
+     UTILITY
+     ───────────────────────────────────────────────── */
+  function escHTML(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  /* ─────────────────────────────────────────────────
+     INIT
+     ───────────────────────────────────────────────── */
+  document.addEventListener('DOMContentLoaded', function () {
+    /* Initial data fetch */
+    fetchLatest();
+    fetchHealthScore();
+    loadTasks();
+    fetchCropMatch();
+    fetchHistory();
+
+    /* Auto-refresh every 10 seconds */
+    setInterval(fetchLatest, 10000);
+
+    /* Init 3D (deferred so canvas is in DOM) */
+    setTimeout(() => {
+      if (typeof window.initDevice3D === 'function') {
+        device3dController = window.initDevice3D('device-3d-canvas');
+      }
+    }, 300);
+  });
+
+})();
+</script>
 {% endblock %}

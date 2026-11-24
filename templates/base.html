@@ -1,35 +1,102 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{% block title %}Smart Soil{% endblock %}</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}AgriSense AI{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  {% block head %}{% endblock %}
 </head>
 <body>
-<nav class="navbar">
-  <div class="brand">🌱 AgriSense AI <span>IoT + AI</span></div>
-  <div class="nav-links">
-    {% if current_user.is_authenticated %}
-      <span class="nav-email">{{ current_user.email }}</span>
-      <a href="{{ url_for('logout') }}">Logout</a>
-    {% else %}
-      <a href="{{ url_for('login') }}">Login</a>
-      <a href="{{ url_for('register') }}">Register</a>
-    {% endif %}
-  </div>
-</nav>
-
-<main class="container">
-  {% with messages = get_flashed_messages() %}
-    {% if messages %}
-      <div class="flash">
-        {% for m in messages %}<p>{{ m }}</p>{% endfor %}
+  {% if current_user.is_authenticated %}
+  <div class="app-shell">
+    <header class="top-bar">
+      <div class="brand">🌱 AgriSense AI</div>
+      <div class="user-info">
+        <span class="user-email">{{ current_user.email }}</span>
+        <a href="{{ url_for('logout') }}" class="logout-link">Logout</a>
       </div>
-    {% endif %}
-  {% endwith %}
+    </header>
 
-  {% block content %}{% endblock %}
-</main>
+    <main class="main-content">
+      {% with messages = get_flashed_messages() %}
+        {% if messages %}
+          <div class="flash" role="alert">
+            {% for message in messages %}
+              <p>{{ message }}</p>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+
+      {% block content %}{% endblock %}
+    </main>
+
+    <nav class="bottom-nav" aria-label="Primary navigation">
+      <button type="button" class="nav-item active" data-tab="home">
+        <span class="nav-icon" aria-hidden="true">🏠</span>
+        <span class="nav-label">Home</span>
+      </button>
+      <button type="button" class="nav-item" data-tab="sensors">
+        <span class="nav-icon" aria-hidden="true">📊</span>
+        <span class="nav-label">Sensors</span>
+      </button>
+      <button type="button" class="nav-item" data-tab="device">
+        <span class="nav-icon" aria-hidden="true">📱</span>
+        <span class="nav-label">Device</span>
+      </button>
+      <button type="button" class="nav-item" data-tab="analytics">
+        <span class="nav-icon" aria-hidden="true">📈</span>
+        <span class="nav-label">Analytics</span>
+      </button>
+      <button type="button" class="nav-item" data-tab="settings">
+        <span class="nav-icon" aria-hidden="true">⚙️</span>
+        <span class="nav-label">Settings</span>
+      </button>
+    </nav>
+  </div>
+  {% else %}
+  <div class="guest-shell">
+    <header class="top-bar">
+      <div class="brand">🌱 AgriSense AI</div>
+      <div class="auth-nav">
+        <a href="{{ url_for('login') }}">Login</a>
+        <a href="{{ url_for('register') }}">Register</a>
+      </div>
+    </header>
+
+    <main class="main-content">
+      {% with messages = get_flashed_messages() %}
+        {% if messages %}
+          <div class="flash" role="alert">
+            {% for message in messages %}
+              <p>{{ message }}</p>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+
+      {{ self.content() }}
+    </main>
+  </div>
+  {% endif %}
+
+  <script>
+    document.querySelectorAll('.bottom-nav .nav-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const panel = document.getElementById('tab-' + item.dataset.tab);
+        if (!panel) return;
+        document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+        document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+        item.classList.add('active');
+        panel.classList.add('active');
+        window.dispatchEvent(new Event('resize'));
+      });
+    });
+  </script>
+  {% block scripts %}{% endblock %}
 </body>
 </html>
