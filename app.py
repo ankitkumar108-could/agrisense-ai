@@ -1,4 +1,5 @@
 import os
+import time
 from datetime import datetime
 
 import requests
@@ -46,6 +47,8 @@ def add_no_cache_headers(response):
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
     return response
+
+
 DEVICE_API_KEY = os.getenv("DEVICE_API_KEY", "change_this_to_your_own_device_secret")
 MOISTURE_THRESHOLD = int(os.getenv("MOISTURE_THRESHOLD", "2500"))
 RAIN_SKIP_PROBABILITY = int(os.getenv("RAIN_SKIP_PROBABILITY", "50"))
@@ -131,6 +134,25 @@ class DeviceControl(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class Task(db.Model):
+    """Per-user farm task checklist item persisted in the database."""
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    title = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text, default="")
+    completed = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "title": self.title,
+            "description": self.description or "",
+            "completed": bool(self.completed),
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
 def get_control():
     """Fetch the single control row, creating it the first time."""
     control = DeviceControl.query.first()
@@ -148,17 +170,9 @@ def load_user(user_id):
 
 # ---------------------------------------------------------------------------
 # Weather helper
-# Primary: OpenWeatherMap (if OPENWEATHER_API_KEY is set) — key-based quota,
-#          not shared with other apps on the same hosting IP.
-# Fallback: Open-Meteo — free, no key needed, but rate-limited per IP address,
-#          which can get exhausted on shared hosts like Render's free tier
-#          when OTHER unrelated apps on the same IP use it heavily.
-# Both results are cached in memory for a few minutes to cut down on calls.
 # ---------------------------------------------------------------------------
-import time
-
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY", "")
-_geocode_cache = {}  # simple in-memory cache so we don't look up the same city every request
+_geocode_cache = {}
 _weather_cache = {"data": None, "fetched_at": 0}
 WEATHER_CACHE_SECONDS = 600  # 10 minutes
 
@@ -209,12 +223,11 @@ def _get_weather_openweathermap():
     description = (data.get("weather") or [{}])[0].get("description", "unknown")
     main = data.get("main", {})
     clouds = data.get("clouds", {}).get("all", 0)
-    # OpenWeatherMap's free current-weather endpoint doesn't give a rain probability
-    # directly, so we approximate it from cloud cover / rain presence.
     rain_probability = 80 if "rain" in data else min(clouds, 60)
 
     return {
         "available": True,
+        "city": WEATHER_CITY.title(),
         "condition": description,
         "description": description,
         "temp": main.get("temp"),
@@ -251,7 +264,6 @@ def _get_weather_openmeteo():
     code = current.get("weather_code", 0)
     description = WMO_CODES.get(code, "unknown")
 
-    # Find the precipitation probability for the current hour
     rain_probability = 10
     try:
         current_time = current["time"]
@@ -265,6 +277,7 @@ def _get_weather_openmeteo():
 
     return {
         "available": True,
+        "city": WEATHER_CITY.title(),
         "condition": description,
         "description": description,
         "temp": current.get("temperature_2m"),
@@ -279,7 +292,7 @@ def _get_weather_wttr():
         f"https://wttr.in/{WEATHER_CITY}",
         params={"format": "j1"},
         timeout=6,
-        headers={"User-Agent": "curl"},  # wttr.in expects a curl-like UA
+        headers={"User-Agent": "curl"},
     )
     data = resp.json()
 
@@ -288,7 +301,6 @@ def _get_weather_wttr():
     rain_probability = 10
     try:
         today = data["weather"][0]["hourly"]
-        # pick the hourly slot closest to now-ish; just average them as a simple estimate
         probs = [int(h.get("chanceofrain", 0)) for h in today]
         rain_probability = max(probs) if probs else 10
     except (KeyError, IndexError, ValueError):
@@ -296,6 +308,7 @@ def _get_weather_wttr():
 
     return {
         "available": True,
+        "city": WEATHER_CITY.title(),
         "condition": description,
         "description": description,
         "temp": float(current.get("temp_C", 0)),
@@ -327,12 +340,10 @@ def get_weather():
         except Exception as exc:
             result = {"available": False, "reason": str(exc)}
 
-    # Only cache successful results, so a failure doesn't stick around for 10 minutes.
     if result.get("available"):
         _weather_cache["data"] = result
         _weather_cache["fetched_at"] = now
     return result
-
 
 
 def decide_pump(moisture_value):
@@ -354,14 +365,12 @@ def decide_pump(moisture_value):
 def area_to_acres(area_value, area_unit):
     if area_unit == "hectare":
         return area_value * 2.471
-    return area_value  # already acres
+    return area_value
 
 
 def recommend_fertilizer(npk_n, npk_p, npk_k, area_value, area_unit):
     """
     Simplified, rule-of-thumb fertilizer dosage estimate (kg per acre), scaled to field size.
-    NOTE: these are common textbook approximations for a demo/project — always confirm
-    with a local agriculture officer / soil-testing lab before applying at real scale.
     """
     acres = area_to_acres(area_value, area_unit)
     n, p, k = (npk_n or 0), (npk_p or 0), (npk_k or 0)
@@ -383,14 +392,13 @@ def recommend_fertilizer(npk_n, npk_p, npk_k, area_value, area_unit):
         "high":   {"Urea (N)": 0,   "DAP (P)": 0,  "MOP (K)": 0},
     }
 
-    result = {
+    return {
         "area_acres": round(acres, 2),
         "n_level": n_level, "p_level": p_level, "k_level": k_level,
         "urea_kg": round(dosage_per_acre[n_level]["Urea (N)"] * acres, 1),
         "dap_kg": round(dosage_per_acre[p_level]["DAP (P)"] * acres, 1),
         "mop_kg": round(dosage_per_acre[k_level]["MOP (K)"] * acres, 1),
     }
-    return result
 
 
 def recommend_crops(ph, ec, moisture, air_temp):
@@ -409,6 +417,48 @@ def recommend_crops(ph, ec, moisture, air_temp):
         return ["Wheat", "Mustard", "Chickpea"]
     else:
         return ["Barley", "Cotton", "Spinach (alkaline-tolerant crops)"]
+
+
+# ---------------------------------------------------------------------------
+# Scoring, Crop Matching & Task Helpers
+# ---------------------------------------------------------------------------
+def _get_owned_task(task_id):
+    """Fetch a Task by ID and verify it belongs to current_user."""
+    task = Task.query.filter_by(id=task_id).first()
+    if not task:
+        return None, (jsonify({"error": "Task not found"}), 404)
+    if task.user_id != current_user.id:
+        return None, (jsonify({"error": "Forbidden"}), 403)
+    return task, None
+
+
+def _range_score(value, ideal_min, ideal_max, low_span, high_span, max_points=20.0):
+    """Score a value as max_points inside [ideal_min, ideal_max], scaling linearly to 0 outside."""
+    if value is None:
+        return 0.0
+    if ideal_min <= value <= ideal_max:
+        return float(max_points)
+    if value < ideal_min:
+        ratio = 1.0 - (ideal_min - value) / low_span
+    else:
+        ratio = 1.0 - (value - ideal_max) / high_span
+    return max(0.0, float(max_points) * ratio)
+
+
+CROP_PROFILES = [
+    {"name": "Tomato", "emoji": "🍅", "ph": (6.0, 7.0), "ec": (1.0, 2.5), "temp": (18.0, 28.0), "moisture": (1800.0, 2800.0)},
+    {"name": "Chilli", "emoji": "🌶️", "ph": (6.0, 7.0), "ec": (0.8, 2.0), "temp": (20.0, 32.0), "moisture": (1600.0, 2600.0)},
+    {"name": "Peas", "emoji": "🫛", "ph": (6.0, 7.5), "ec": (0.5, 1.5), "temp": (13.0, 22.0), "moisture": (1800.0, 2700.0)},
+    {"name": "Beans", "emoji": "🫘", "ph": (6.0, 7.0), "ec": (0.5, 1.2), "temp": (18.0, 27.0), "moisture": (1800.0, 2700.0)},
+    {"name": "Brinjal", "emoji": "🍆", "ph": (5.5, 6.8), "ec": (0.8, 2.0), "temp": (20.0, 30.0), "moisture": (1700.0, 2700.0)},
+    {"name": "Wheat", "emoji": "🌾", "ph": (6.0, 7.5), "ec": (0.5, 2.5), "temp": (12.0, 24.0), "moisture": (1500.0, 2500.0)},
+    {"name": "Rice", "emoji": "🍚", "ph": (5.5, 6.8), "ec": (0.5, 2.0), "temp": (22.0, 34.0), "moisture": (2600.0, 3600.0)},
+    {"name": "Maize", "emoji": "🌽", "ph": (5.8, 7.2), "ec": (0.5, 1.8), "temp": (18.0, 30.0), "moisture": (1700.0, 2700.0)},
+    {"name": "Potato", "emoji": "🥔", "ph": (5.2, 6.5), "ec": (0.8, 1.8), "temp": (15.0, 24.0), "moisture": (1900.0, 2900.0)},
+    {"name": "Sugarcane", "emoji": "🎋", "ph": (6.0, 7.5), "ec": (0.8, 2.0), "temp": (22.0, 35.0), "moisture": (2200.0, 3200.0)},
+    {"name": "Mustard", "emoji": "🌼", "ph": (6.0, 7.5), "ec": (0.5, 2.0), "temp": (12.0, 25.0), "moisture": (1300.0, 2300.0)},
+    {"name": "Cotton", "emoji": "☁️", "ph": (6.0, 8.0), "ec": (1.0, 3.5), "temp": (21.0, 35.0), "moisture": (1400.0, 2400.0)},
+]
 
 
 def build_context_summary(latest, weather, profile):
@@ -434,14 +484,6 @@ def build_context_summary(latest, weather, profile):
 
 
 def _call_llm_api(url, headers, body, extract_fn, retries=3):
-    """
-    POST to an LLM API with automatic silent retries on temporary failures
-    (429 rate-limit, 500/503 overload, or network errors) so a single busy
-    moment doesn't surface as an error to the farmer. Real errors (e.g. a bad
-    key, 401/403/404) are not retried — no point trying the same broken thing
-    3 times.
-    Returns (answer_text_or_None, error_message_or_None).
-    """
     last_error = "unknown error"
     for attempt in range(retries):
         try:
@@ -454,9 +496,9 @@ def _call_llm_api(url, headers, body, extract_fn, retries=3):
             last_error = data.get("error", {}).get("message", f"HTTP {resp.status_code}")
 
             if resp.status_code in (429, 500, 502, 503, 504):
-                time.sleep(1.2 * (attempt + 1))  # brief, increasing wait — stays invisible to the user
+                time.sleep(1.2 * (attempt + 1))
                 continue
-            return None, last_error  # a real error — retrying won't help
+            return None, last_error
         except Exception as exc:
             last_error = str(exc)
             time.sleep(1.2 * (attempt + 1))
@@ -464,7 +506,6 @@ def _call_llm_api(url, headers, body, extract_fn, retries=3):
 
 
 def _ask_gemini(prompt):
-    """Try every comma-separated Gemini key, silently retrying each up to 3 times on overload."""
     keys = [k.strip() for k in GEMINI_API_KEY.split(",") if k.strip()]
     if not keys:
         return None, "no Gemini key set"
@@ -486,7 +527,6 @@ def _ask_gemini(prompt):
 
 
 def _ask_groq(prompt):
-    """Free fallback #2: Groq (needs a free key from https://console.groq.com/keys)."""
     if not GROQ_API_KEY:
         return None, "no Groq key set"
     body = {
@@ -502,7 +542,6 @@ def _ask_groq(prompt):
 
 
 def _ask_openrouter(prompt):
-    """Free fallback #3: OpenRouter free models (needs a free key from https://openrouter.ai/keys)."""
     if not OPENROUTER_API_KEY:
         return None, "no OpenRouter key set"
     body = {
@@ -518,16 +557,6 @@ def _ask_openrouter(prompt):
 
 
 def ask_ai(question, context_summary):
-    """
-    Tries multiple FREE AI providers in order, so if one is out of quota or
-    overloaded, the next one is used automatically:
-      1. Google Gemini — every comma-separated GEMINI_API_KEY, each retried a couple
-         of times on temporary overload (429/500/503)
-      2. Groq                (GROQ_API_KEY)
-      3. OpenRouter free tier (OPENROUTER_API_KEY)
-    Any provider whose key isn't set is simply skipped.
-    Falls back to a short rule-based note if NO provider is configured at all.
-    """
     if not (GEMINI_API_KEY or GROQ_API_KEY or OPENROUTER_API_KEY):
         return (
             "AI chat abhi off hai kyunki koi bhi AI key set nahi hai (.env mein GEMINI_API_KEY, "
@@ -536,17 +565,17 @@ def ask_ai(question, context_summary):
         )
 
     prompt = (
-    "You are an agricultural assistant helping an Indian farmer using an IoT soil "
-    "monitoring system. Answer briefly and practically, in simple Hindi/Hinglish where natural.\n\n"
-    "If a question is not related to farming, still answer it directly and accurately "
-    "using your general knowledge, like a normal helpful AI assistant would. However, "
-    "never invent or fabricate details about anything you don't actually know, or that "
-    "doesn't exist in your sensor data / system context (such as unfamiliar names, terms, "
-    "or devices). In such cases, clearly say \"I don't have information about that\" or "
-    "ask the user to clarify — never guess confidently.\n\n"
-    f"Current farm context:\n{context_summary}\n\n"
-    f"Farmer's question: {question}"
-)
+        "You are an agricultural assistant helping an Indian farmer using an IoT soil "
+        "monitoring system. Answer briefly and practically, in simple Hindi/Hinglish where natural.\n\n"
+        "If a question is not related to farming, still answer it directly and accurately "
+        "using your general knowledge, like a normal helpful AI assistant would. However, "
+        "never invent or fabricate details about anything you don't actually know, or that "
+        "doesn't exist in your sensor data / system context (such as unfamiliar names, terms, "
+        "or devices). In such cases, clearly say \"I don't have information about that\" or "
+        "ask the user to clarify — never guess confidently.\n\n"
+        f"Current farm context:\n{context_summary}\n\n"
+        f"Farmer's question: {question}"
+    )
     last_error = "unknown error"
     for provider in (_ask_gemini, _ask_groq, _ask_openrouter):
         result, error = provider(prompt)
@@ -630,9 +659,41 @@ def dashboard():
     control = get_control()
     profile = get_farm_profile()
     chat_history = ChatMessage.query.filter_by(user_id=current_user.id).order_by(ChatMessage.timestamp).limit(20).all()
+    tasks = Task.query.filter_by(user_id=current_user.id).order_by(Task.created_at.desc()).limit(20).all()
+
+    pump_decision, pump_reason = (
+        (control.manual_state, "Manual override from dashboard")
+        if control.mode == "MANUAL"
+        else (
+            (latest.pump_decision, latest.pump_reason)
+            if latest
+            else ("OFF", "Waiting for sensor data…")
+        )
+    )
+    fertilizer = (
+        recommend_fertilizer(latest.npk_n, latest.npk_p, latest.npk_k, profile.area_value, profile.area_unit)
+        if latest
+        else {}
+    )
+    crops = (
+        recommend_crops(latest.ph, latest.ec, latest.moisture, latest.air_temp)
+        if latest
+        else []
+    )
+
     return render_template(
-        "dashboard.html", latest=latest, history=history, weather=weather,
-        control=control, profile=profile, chat_history=chat_history
+        "dashboard.html",
+        latest=latest,
+        history=history,
+        weather=weather,
+        control=control,
+        profile=profile,
+        chat_history=chat_history,
+        tasks=tasks,
+        pump_decision=pump_decision,
+        pump_reason=pump_reason,
+        fertilizer=fertilizer,
+        crops=crops,
     )
 
 
@@ -707,6 +768,173 @@ def control_pump():
     control.updated_at = datetime.utcnow()
     db.session.commit()
     return jsonify({"mode": control.mode, "manual_state": control.manual_state})
+
+
+# ---------------------------------------------------------------------------
+# New Dashboard API Routes (Tasks, Health Score, Crop Match, History)
+# ---------------------------------------------------------------------------
+@app.route("/api/tasks", methods=["GET"])
+@login_required
+def get_tasks():
+    tasks = (
+        Task.query.filter_by(user_id=current_user.id)
+        .order_by(Task.created_at.desc())
+        .all()
+    )
+    return jsonify([task.to_dict() for task in tasks])
+
+
+@app.route("/api/tasks", methods=["POST"])
+@login_required
+def create_task():
+    data = request.get_json(silent=True) or {}
+    title = (data.get("title") or "").strip()
+    if not title:
+        return jsonify({"error": "Task title is required"}), 400
+    description = (data.get("description") or "").strip()
+
+    task = Task(
+        user_id=current_user.id,
+        title=title[:200],
+        description=description,
+    )
+    db.session.add(task)
+    db.session.commit()
+    return jsonify(task.to_dict()), 201
+
+
+@app.route("/api/tasks/<int:task_id>/toggle", methods=["POST"])
+@login_required
+def toggle_task(task_id):
+    task, error_response = _get_owned_task(task_id)
+    if error_response:
+        return error_response
+
+    task.completed = not bool(task.completed)
+    db.session.commit()
+    return jsonify(task.to_dict())
+
+
+@app.route("/api/tasks/<int:task_id>", methods=["DELETE"])
+@login_required
+def delete_task(task_id):
+    task, error_response = _get_owned_task(task_id)
+    if error_response:
+        return error_response
+
+    db.session.delete(task)
+    db.session.commit()
+    return jsonify({"success": True})
+
+
+@app.route("/api/health-score", methods=["GET"])
+@login_required
+def get_health_score():
+    latest = SensorReading.query.order_by(SensorReading.timestamp.desc()).first()
+    if not latest:
+        return jsonify({"score": 0, "label": "No Data"})
+
+    moisture_score = _range_score(latest.moisture, 1500.0, 3000.0, 1500.0, 1095.0, 20.0)
+    ph_score = _range_score(latest.ph, 6.0, 7.5, 3.0, 3.0, 20.0)
+    ec_score = _range_score(latest.ec, 0.5, 2.0, 0.5, 3.0, 20.0)
+    temp_score = _range_score(latest.soil_temp, 18.0, 30.0, 18.0, 15.0, 20.0)
+
+    adequate_count = sum([
+        latest.npk_n is not None and latest.npk_n > 40,
+        latest.npk_p is not None and latest.npk_p > 20,
+        latest.npk_k is not None and latest.npk_k > 40,
+    ])
+    npk_score = 20.0 * (adequate_count / 3.0)
+
+    breakdown = {
+        "moisture": round(moisture_score, 1),
+        "ph": round(ph_score, 1),
+        "npk": round(npk_score, 1),
+        "ec": round(ec_score, 1),
+        "temperature": round(temp_score, 1),
+    }
+    total_score = int(round(sum(breakdown.values())))
+
+    if total_score >= 75:
+        label = "Good"
+    elif total_score >= 50:
+        label = "Fair"
+    elif total_score >= 25:
+        label = "Poor"
+    else:
+        label = "Critical"
+
+    return jsonify({
+        "score": total_score,
+        "label": label,
+        "breakdown": breakdown,
+    })
+
+
+@app.route("/api/crop-match", methods=["GET"])
+@login_required
+def get_crop_match():
+    latest = SensorReading.query.order_by(SensorReading.timestamp.desc()).first()
+    if not latest:
+        return jsonify([])
+
+    temp_val = latest.soil_temp if latest.soil_temp is not None else latest.air_temp
+    param_configs = [
+        ("ph", latest.ph, 3.0, 3.0),
+        ("ec", latest.ec, 1.5, 2.5),
+        ("temp", temp_val, 15.0, 15.0),
+        ("moisture", latest.moisture, 1500.0, 1500.0),
+    ]
+
+    matches = []
+    for crop in CROP_PROFILES:
+        scores = [
+            _range_score(val, crop[key][0], crop[key][1], low_span, high_span, 100.0)
+            for key, val, low_span, high_span in param_configs
+            if val is not None
+        ]
+        match_pct = int(round(sum(scores) / len(scores))) if scores else 0
+        matches.append({
+            "name": crop["name"],
+            "match_pct": match_pct,
+            "emoji": crop["emoji"],
+        })
+
+    matches.sort(key=lambda item: item["match_pct"], reverse=True)
+    return jsonify(matches[:5])
+
+
+@app.route("/api/history", methods=["GET"])
+@login_required
+def get_history():
+    try:
+        limit = int(request.args.get("limit", 50))
+    except (TypeError, ValueError):
+        limit = 50
+    limit = max(1, min(limit, 200))
+
+    readings = (
+        SensorReading.query.order_by(SensorReading.timestamp.desc())
+        .limit(limit)
+        .all()
+    )
+    return jsonify([
+        {
+            "timestamp": r.timestamp.isoformat() if r.timestamp else None,
+            "moisture": r.moisture,
+            "soil_temp": r.soil_temp,
+            "ph": r.ph,
+            "ec": r.ec,
+            "npk_n": r.npk_n,
+            "npk_p": r.npk_p,
+            "npk_k": r.npk_k,
+            "air_temp": r.air_temp,
+            "humidity": r.humidity,
+            "rain_detected": bool(r.rain_detected),
+            "pump_decision": r.pump_decision,
+        }
+        for r in readings
+    ])
 
 
 # ---------------------------------------------------------------------------
@@ -815,8 +1043,8 @@ def admin():
 
 # ---------------------------------------------------------------------------
 # Create tables at import time too, so this works whether the app is started
-# with `python app.py` OR with a WSGI server like `gunicorn app:app`
-# (Replit deployments typically use the latter, which never hits __main__).
+# with `python app.py` OR with a WSGI server like `gunicorn app:app`.
+# ---------------------------------------------------------------------------
 with app.app_context():
     db.create_all()
 
